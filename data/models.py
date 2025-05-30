@@ -26,6 +26,7 @@ class RiskConfig:
     take_profit_pct: float
     max_daily_loss: float
     max_exposure_pct: float
+    risk_ratio: float = 2.0  # Risk/Reward ratio (1:RR) - ex: 2.0 = 1:2
 
 
 @dataclass
@@ -34,6 +35,7 @@ class StrategyConfig:
     parameters: Dict[str, Any]
     timeframe: str
     pairs: List[str]
+    risk_config: Optional[RiskConfig] = None  # Risk management au niveau stratégie
 
 
 @dataclass
