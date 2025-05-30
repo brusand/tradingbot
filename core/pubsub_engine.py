@@ -195,7 +195,7 @@ class PubSubEngine:
             active_subscribers.append(callback)
         
         # Mettre à jour la liste avec seulement les abonnés actifs
-        self.subscribers[channel] = active_subscribers
+        self.subscribers[channel] = [sub for sub in subscribers_list if sub in [cb for cb in active_subscribers]]
         
         # Livrer le message à tous les abonnés actifs
         delivery_tasks = []
