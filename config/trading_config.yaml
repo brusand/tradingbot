@@ -5,98 +5,52 @@ indicators:
     description: Exponential Moving Average
     source: close
     type: EMA
+    workflow_support: true
+  MACD:
+    default_parameters:
+      fast_period: 12
+      signal_period: 9
+      slow_period: 26
+    description: Moving Average Convergence Divergence
+    source: close
+    type: MACD
+    workflow_support: true
   RSI:
     default_parameters:
       period: 14
     description: Relative Strength Index
     source: close
     type: RSI
+    workflow_support: true
   SMA:
     default_parameters:
       period: 20
     description: Simple Moving Average
     source: close
     type: SMA
+    workflow_support: true
 risk_profiles:
-  aggressive:
-    max_concurrent_trades: 5
-    max_daily_loss: 1000.0
-    max_drawdown_percent: 25.0
-    name: Profil Agressif
-    position_size_method: percent
-    position_size_value: 5.0
-    stop_loss_percent: 3.0
-    take_profit_percent: 6.0
-    trailing_stop: true
-  conservative:
-    max_concurrent_trades: 2
-    max_daily_loss: 200.0
-    max_drawdown_percent: 10.0
-    name: Profil Conservateur
-    position_size_method: percent
-    position_size_value: 1.0
-    stop_loss_percent: 1.5
-    take_profit_percent: 3.0
-    trailing_stop: false
-  moderate:
+  default:
     max_concurrent_trades: 3
-    max_daily_loss: 500.0
-    max_drawdown_percent: 15.0
-    name: "Profil Mod\xE9r\xE9"
-    position_size_method: percent
+    name: "Profil par d\xE9faut"
     position_size_value: 2.0
     stop_loss_percent: 2.0
     take_profit_percent: 4.0
-    trailing_stop: true
 sessions:
-  demo_session:
-    created_at: '2025-05-30T17:21:34.462511+00:00'
-    id: demo_session
+  demo_unified_session:
+    created_at: '2025-05-30T21:38:40.664503+00:00'
+    id: demo_unified_session
+    initial_balance: 10000.0
     mode: sandbox
-    name: "Session de D\xE9monstration"
+    name: Demo Unified Session
     status: configured
     strategies:
-    - demo_sma_crossover
-    - demo_ema_rsi
+    - demo_unified
     workflow_enabled: true
 strategies:
-  demo_ema_rsi:
-    created_at: '2025-05-30T17:21:34.462494+00:00'
-    end_date: now
-    id: demo_ema_rsi
-    indicators:
-      EMA_12:
-        parameters:
-          period: 12
-        source: close
-        type: EMA
-      EMA_26:
-        parameters:
-          period: 26
-        source: close
-        type: EMA
-      RSI_14:
-        parameters:
-          period: 14
-        source: close
-        type: RSI
-    name: Demo EMA RSI Strategy
-    parameters:
-      long_window: 26
-      short_window: 12
-    risk_profile: moderate
-    signal_rules:
-      long_condition: EMA_12 > EMA_26 & close > EMA_12 & RSI_14 > 50 & RSI_14 < 80
-      short_condition: EMA_12 < EMA_26 & close < EMA_12 & RSI_14 < 50 & RSI_14 > 20
-    start_date: '2024-01-01'
-    status: configured
-    symbol: ETHUSD
-    timeframe: 15m
-    workflow_enabled: true
-  demo_sma_crossover:
-    created_at: '2025-05-30T17:21:34.462216+00:00'
-    end_date: now
-    id: demo_sma_crossover
+  demo_unified:
+    created_at: '2025-05-30T21:38:40.664480+00:00'
+    id: demo_unified
     indicators:
       RSI_14:
         parameters:
@@ -113,37 +67,14 @@ strategies:
           period: 30
         source: close
         type: SMA
-    name: Demo SMA Crossover Strategy
+    name: Demo Unified Strategy
     parameters:
       long_window: 30
       short_window: 10
-    risk_profile: conservative
     signal_rules:
       long_condition: SMA_10 > SMA_30 & SMA_10[-1] <= SMA_30[-1] & RSI_14 < 70
       short_condition: SMA_10 < SMA_30 & SMA_10[-1] >= SMA_30[-1] & RSI_14 > 30
-    start_date: '2024-01-01'
     status: configured
     symbol: BTCUSD
     timeframe: 5m
     workflow_enabled: true
-  mystrat:
-    created_at: '2025-05-30T19:00:52.503036+00:00'
-    end_date: now
-    id: mystrat
-    indicators:
-      EMA_5:
-        parameters:
-          period: 5
-        source: close
-        type: EMA
-    name: My Strat
-    parameters: {}
-    risk_profile: default
-    signal_rules:
-      long_condition: ''''''
-      short_condition: ''''''
-    start_date: '2025-01-01'
-    status: inactive
-    symbol: BTCUSDC
-    timeframe: 15m
-    workflow_enabled: false
