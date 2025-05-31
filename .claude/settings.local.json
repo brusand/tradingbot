@@ -6,7 +6,8 @@
       "Bash(python:*)",
       "Bash(timeout:*)",
       "Bash(grep:*)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "Bash(TRADING_CONFIG_PATH=config/test_trading_config.yaml python cli/trading_cli_v4.py performance profitable-sessions)"
     ],
     "deny": []
   }

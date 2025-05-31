@@ -16,6 +16,7 @@ from uuid import uuid4
 from data.models import StrategyConfig
 from core.pubsub_engine import PubSubEngine
 from core.channels import CHANNELS
+from core.balance_tracker import BalanceTracker
 from strategies.performance_tracker import PerformanceTracker
 
 logger = logging.getLogger(__name__)
@@ -173,7 +174,11 @@ class TradingStrategy:
         self.signal_rules = getattr(config, 'signal_rules', [])
         
         # Performance tracking
-        self.performance_tracker = PerformanceTracker(config.name, 10000.0)
+        initial_balance = getattr(config, 'initial_balance', 10000.0)
+        self.performance_tracker = PerformanceTracker(config.name, initial_balance)
+        
+        # Balance tracking pour mise à jour temps réel
+        self.balance_tracker = BalanceTracker(config.name, initial_balance)
         
         # Métriques de performance
         self.processing_metrics = {
@@ -314,10 +319,13 @@ class TradingStrategy:
                 await self._publish_signals(signals)
                 self.processing_metrics['signals_generated'] += len(signals)
             
-            # 7. Demander mise à jour de la balance
+            # 7. Mettre à jour la balance dans le DataFrame
+            await self._update_balance_in_dataframe(candle_data)
+            
+            # 8. Demander mise à jour de la balance
             await self._request_balance_update()
             
-            # 8. Publier métriques
+            # 9. Publier métriques
             await self._publish_processing_metrics()
             
             self.processing_metrics['candles_processed'] += 1
@@ -643,3 +651,36 @@ class TradingStrategy:
             "last_timestamp": self.dataframe.iloc[-1]['timestamp'] if 'timestamp' in self.dataframe.columns else None,
             "last_values": self._get_dataframe_snapshot()
         }
+    
+    async def _update_balance_in_dataframe(self, candle_data: Dict):
+        """Met à jour la balance courante dans le DataFrame après traitement de la chandelle"""
+        try:
+            timestamp = pd.Timestamp(candle_data.get('timestamp'))
+            
+            # Simuler un petit changement de balance (ici on pourrait intégrer le vrai calcul)
+            # Pour la démo, on ajoute juste une entrée de balance
+            current_balance = self.balance_tracker.current_balance
+            
+            # Ajouter l'entrée de balance pour cette chandelle
+            self.balance_tracker.add_balance_entry(
+                timestamp, 
+                current_balance,
+                0.0,  # Pas de trade fermé pour cette chandelle
+                f"Fin traitement chandelle {timestamp}"
+            )
+            
+            # Enrichir le DataFrame de la stratégie avec les données de balance
+            self.dataframe = self.balance_tracker.add_to_strategy_dataframe(self.dataframe)
+            
+            logger.debug(f"Balance mise à jour: {current_balance}€ pour {timestamp}")
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la mise à jour de balance: {e}")
+    
+    def get_current_balance(self) -> float:
+        """Retourne la balance courante de la stratégie"""
+        return self.balance_tracker.current_balance
+    
+    def get_balance_summary(self) -> Dict:
+        """Retourne un résumé des performances de balance"""
+        return self.balance_tracker.get_performance_summary()

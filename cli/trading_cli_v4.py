@@ -43,6 +43,23 @@ from data.persistence import DatabaseManager
 from core.session_manager import SessionManager
 from core.strategy_engine import StrategyEngine
 
+# Imports smart filters
+try:
+    from utils.smart_filters import (
+        smart_resolve_ids, SessionFilter, StrategyFilter, 
+        UniversalFilter, smart_resolve_params
+    )
+    SMART_FILTERS_AVAILABLE = True
+except ImportError:
+    SMART_FILTERS_AVAILABLE = False
+    click.echo("⚠️ Smart filters non disponibles")
+    
+    # Décorateur fallback vide
+    def smart_resolve_params(**kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 # Imports workflow avancé
 try:
     from core.strategy_workflow import TradingStrategy, IndicatorConfig, SignalRule
@@ -200,7 +217,9 @@ class TradingCLI:
             parameters=strategy_data.get('parameters', {}),
             timeframe=strategy_data.get('timeframe', '5m'),
             pairs=[strategy_data.get('symbol', 'BTCUSD')],
-            risk_config=risk_config
+            risk_config=risk_config,
+            initial_balance=strategy_data.get('initial_balance', 10000.0),
+            current_balance=strategy_data.get('current_balance')
         )
         
         enhanced = EnhancedStrategyConfig(base_config)
@@ -364,7 +383,7 @@ def session():
               help='Mode de trading')
 @click.option('--no-workflow', is_flag=True, help='Désactiver le workflow avancé (activé par défaut)')
 @click.option('--workflow', is_flag=True, help='[DEPRECATED] Utiliser --no-workflow pour désactiver')
-@click.option('--initial-balance', default=10000.0, type=float, help='Balance initiale')
+@click.option('--initial-balance', default=0.0, type=float, help='[DEPRECATED] Balance maintenant gérée par stratégie')
 @click.option('--count', default=1, type=int, help='Nombre de sessions à créer')
 @click.pass_context
 def create_session(ctx, name, mode, no_workflow, workflow, initial_balance, count):
@@ -389,17 +408,20 @@ def create_session(ctx, name, mode, no_workflow, workflow, initial_balance, coun
             session_name = name if count == 1 else f"{name}_{i+1}"
             session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}" if count > 1 else f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             
-            # Configuration de session
+            # Configuration de session (balance supprimée, maintenant gérée par stratégie)
             session_config = {
                 'id': session_id,
                 'name': session_name,
                 'mode': mode,
                 'workflow_enabled': workflow_enabled,
                 'strategies': [],
-                'initial_balance': initial_balance,
                 'status': 'created',
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
+            
+            # Warning si balance spécifiée
+            if initial_balance > 0:
+                click.echo("⚠️ --initial-balance deprecated: Balance maintenant gérée par stratégie")
             
             # Sauvegarder dans le registre
             trading_cli.sessions_registry[session_id] = session_config
@@ -483,14 +505,12 @@ def list_sessions(ctx, mode, output_format):
 @click.argument('session_id')
 @click.option('--force', is_flag=True, help='Forcer le démarrage')
 @click.pass_context
+@smart_resolve_params(session_id='session')
 def start_session(ctx, session_id, force):
-    """Démarrer une session (workflow ou standard)"""
+    """Démarrer une session (workflow ou standard) - utilise la recherche intelligente"""
     trading_cli = ctx.obj['cli']
     
     async def _start():
-        if session_id not in trading_cli.sessions_registry:
-            click.echo(f"❌ Session '{session_id}' introuvable!")
-            return
         
         session = trading_cli.sessions_registry[session_id]
         
@@ -548,13 +568,10 @@ def start_session(ctx, session_id, force):
 @click.argument('session_id')
 @click.option('--live', is_flag=True, help='Mode temps réel')
 @click.pass_context
+@smart_resolve_params(session_id='session')
 def show_session(ctx, session_id, live):
-    """Afficher les détails complets d'une session"""
+    """Afficher les détails complets d'une session (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
-    
-    if session_id not in trading_cli.sessions_registry:
-        click.echo(f"❌ Session '{session_id}' introuvable!")
-        return
     
     session = trading_cli.sessions_registry[session_id]
     
@@ -617,6 +634,110 @@ def show_session(ctx, session_id, live):
     else:
         display_session_info()
 
+@session.command('add-strategy')
+@click.argument('session_id')
+@click.argument('strategy_id')
+@click.pass_context
+@smart_resolve_params(session_id='session', strategy_id='strategy')
+def add_strategy_to_session(ctx, session_id, strategy_id):
+    """Ajouter une stratégie à une session (utilise la recherche intelligente)"""
+    trading_cli = ctx.obj['cli']
+    
+    session = trading_cli.sessions_registry[session_id]
+    strategy = trading_cli.strategies_registry[strategy_id]
+    
+    # Vérifications de compatibilité
+    if session.get('workflow_enabled') and not strategy.get('workflow_enabled'):
+        if not click.confirm(f"⚠️ Session workflow mais stratégie standard. Continuer?"):
+            return
+    
+    if 'strategies' not in session:
+        session['strategies'] = []
+    
+    if strategy_id not in session['strategies']:
+        session['strategies'].append(strategy_id)
+        trading_cli._save_configuration()
+        click.echo(f"✅ Stratégie '{strategy_id}' ajoutée à la session '{session_id}'")
+        click.echo(f"📊 Session contient maintenant {len(session['strategies'])} stratégie(s)")
+    else:
+        click.echo(f"⚠️ Stratégie '{strategy_id}' déjà dans la session!")
+
+@session.command('remove-strategy')
+@click.argument('session_id')
+@click.argument('strategy_id')
+@click.pass_context
+@smart_resolve_params(session_id='session', strategy_id='strategy')
+def remove_strategy_from_session(ctx, session_id, strategy_id):
+    """Retirer une stratégie d'une session (utilise la recherche intelligente)"""
+    trading_cli = ctx.obj['cli']
+    
+    session = trading_cli.sessions_registry[session_id]
+    
+    if 'strategies' not in session:
+        session['strategies'] = []
+    
+    if strategy_id in session['strategies']:
+        session['strategies'].remove(strategy_id)
+        trading_cli._save_configuration()
+        click.echo(f"✅ Stratégie '{strategy_id}' retirée de la session '{session_id}'")
+        click.echo(f"📊 Session contient maintenant {len(session['strategies'])} stratégie(s)")
+    else:
+        click.echo(f"⚠️ Stratégie '{strategy_id}' n'est pas dans cette session!")
+
+@session.command('list-strategies')
+@click.argument('session_id')
+@click.option('--detailed', is_flag=True, help='Affichage détaillé des stratégies')
+@click.pass_context
+@smart_resolve_params(session_id='session')
+def list_session_strategies(ctx, session_id, detailed):
+    """Lister les stratégies d'une session (utilise la recherche intelligente)"""
+    trading_cli = ctx.obj['cli']
+    
+    session = trading_cli.sessions_registry[session_id]
+    strategies = session.get('strategies', [])
+    
+    if not strategies:
+        click.echo(f"⚪ Aucune stratégie dans la session '{session_id}'")
+        return
+    
+    click.echo(f"🎯 Stratégies de la session '{session['name']}' ({len(strategies)}):")
+    
+    if detailed:
+        for strategy_id in strategies:
+            if strategy_id in trading_cli.strategies_registry:
+                strategy = trading_cli.strategies_registry[strategy_id]
+                balance = strategy.get('current_balance', strategy.get('initial_balance', 'N/A'))
+                workflow_icon = "🚀" if strategy.get('workflow_enabled') else "⚪"
+                click.echo(f"\n  📋 {strategy_id}:")
+                click.echo(f"    Nom: {strategy['name']}")
+                click.echo(f"    Paire: {strategy.get('symbol', 'N/A')}")
+                click.echo(f"    Balance: {balance}€")
+                click.echo(f"    Workflow: {workflow_icon}")
+                click.echo(f"    Status: {strategy.get('status', 'inactive')}")
+            else:
+                click.echo(f"  ❌ {strategy_id} (stratégie introuvable)")
+    else:
+        # Affichage compact
+        table_data = []
+        for strategy_id in strategies:
+            if strategy_id in trading_cli.strategies_registry:
+                strategy = trading_cli.strategies_registry[strategy_id]
+                balance = strategy.get('current_balance', strategy.get('initial_balance', 'N/A'))
+                workflow_icon = "🚀" if strategy.get('workflow_enabled') else "⚪"
+                table_data.append([
+                    strategy_id[:20] + "..." if len(strategy_id) > 20 else strategy_id,
+                    strategy['name'][:25] + "..." if len(strategy['name']) > 25 else strategy['name'],
+                    strategy.get('symbol', 'N/A'),
+                    f"{balance}€",
+                    workflow_icon,
+                    strategy.get('status', 'inactive')
+                ])
+            else:
+                table_data.append([strategy_id, "❌ INTROUVABLE", "N/A", "N/A", "❌", "error"])
+        
+        headers = ['ID', 'Nom', 'Paire', 'Balance', 'Workflow', 'Status']
+        click.echo(tabulate(table_data, headers=headers, tablefmt='grid'))
+
 # ============================================================================
 # COMMANDES ANALYTICS (V2 + améliorations)
 # ============================================================================
@@ -673,19 +794,41 @@ def portfolio_report(ctx, export, period):
         click.echo(f"\n💾 Rapport exporté vers {export}")
 
 @analytics.command('compare')
-@click.argument('session_ids', nargs=-1, required=True)
+@click.argument('session_queries', nargs=-1, required=True)
 @click.option('--metric', default='performance', help='Métrique de comparaison')
 @click.pass_context
-def compare_sessions(ctx, session_ids, metric):
-    """Comparaison avancée entre sessions"""
+def compare_sessions(ctx, session_queries, metric):
+    """Comparaison avancée entre sessions (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
     
-    click.echo(f"🔍 COMPARAISON DE {len(session_ids)} SESSIONS")
+    # Résoudre tous les IDs de sessions
+    resolved_session_ids = []
+    for session_query in session_queries:
+        if SMART_FILTERS_AVAILABLE:
+            session_id, error = UniversalFilter.resolve_session(session_query, trading_cli.sessions_registry)
+            
+            if error:
+                click.echo(error)
+                return
+            
+            # Afficher la résolution si différente
+            if session_id != session_query:
+                click.echo(f"🔍 Session résolue: '{session_query}' → '{session_id}'")
+            
+            resolved_session_ids.append(session_id)
+        else:
+            # Fallback sans smart filters
+            if session_query not in trading_cli.sessions_registry:
+                click.echo(f"❌ Session '{session_query}' introuvable!")
+                return
+            resolved_session_ids.append(session_query)
+    
+    click.echo(f"🔍 COMPARAISON DE {len(resolved_session_ids)} SESSIONS")
     click.echo("=" * 50)
     
     comparison_data = []
     
-    for session_id in session_ids:
+    for session_id in resolved_session_ids:
         if session_id in trading_cli.sessions_registry:
             session = trading_cli.sessions_registry[session_id]
             
@@ -817,6 +960,11 @@ def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive):
         timeframe = click.prompt('Timeframe', default='5m')
         strategy_config['timeframe'] = timeframe
         
+        # Configuration de la balance initiale
+        initial_balance = click.prompt('Balance initiale (€)', default=10000.0, type=float)
+        strategy_config['initial_balance'] = initial_balance
+        strategy_config['current_balance'] = initial_balance  # Initialise à la même valeur
+        
         if workflow_enabled and WORKFLOW_AVAILABLE:
             click.echo("\n🚀 Configuration workflow avancé:")
             short_window = click.prompt('Fenêtre courte pour SMA', default=10, type=int)
@@ -883,13 +1031,10 @@ def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive):
 @strategy.command('show')
 @click.argument('strategy_id')
 @click.pass_context
+@smart_resolve_params(strategy_id='strategy')
 def show_strategy(ctx, strategy_id):
-    """Afficher les détails complets d'une stratégie"""
+    """Afficher les détails complets d'une stratégie (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
-    
-    if strategy_id not in trading_cli.strategies_registry:
-        click.echo(f"❌ Stratégie '{strategy_id}' introuvable!")
-        return
     
     strategy = trading_cli.strategies_registry[strategy_id]
     
@@ -902,6 +1047,20 @@ def show_strategy(ctx, strategy_id):
     click.echo(f"  Risk Profile: {strategy.get('risk_profile', 'default')}")
     click.echo(f"  Status: {strategy.get('status', 'inactive')}")
     click.echo(f"  Workflow: {'🚀 Activé' if strategy.get('workflow_enabled') else '❌ Désactivé'}")
+    
+    # Balance de la stratégie
+    initial_balance = strategy.get('initial_balance', 'N/A')
+    current_balance = strategy.get('current_balance', initial_balance)
+    if isinstance(current_balance, (int, float)) and isinstance(initial_balance, (int, float)):
+        pnl = current_balance - initial_balance
+        pnl_pct = (pnl / initial_balance * 100) if initial_balance > 0 else 0
+        pnl_indicator = "📈" if pnl >= 0 else "📉"
+        click.echo(f"  Balance initiale: {initial_balance}€")
+        click.echo(f"  Balance courante: {current_balance}€")
+        click.echo(f"  P&L: {pnl_indicator} {pnl:+.2f}€ ({pnl_pct:+.2f}%)")
+    else:
+        click.echo(f"  Balance initiale: {initial_balance}€")
+        click.echo(f"  Balance courante: {current_balance}€")
     
     # Migration info
     if strategy.get('migrated_from'):
@@ -954,6 +1113,304 @@ def show_strategy(ctx, strategy_id):
         
         except Exception as e:
             click.echo(f"⚠️ Erreur lors de la simulation du workflow: {e}")
+    
+    # Performance de la stratégie
+    performance = strategy.get('performance', {})
+    if performance:
+        click.echo(f"\n📊 PERFORMANCE DE LA STRATÉGIE:")
+        
+        total_trades = performance.get('total_trades', 0)
+        winning_trades = performance.get('winning_trades', 0)
+        losing_trades = performance.get('losing_trades', 0)
+        win_rate = performance.get('win_rate', 0)
+        
+        click.echo(f"  🎯 Trades totaux: {total_trades}")
+        click.echo(f"  🏆 Trades gagnants: {winning_trades}")
+        click.echo(f"  💔 Trades perdants: {losing_trades}")
+        
+        win_rate_icon = "🎯" if win_rate >= 0.6 else "📈" if win_rate >= 0.4 else "📉"
+        click.echo(f"  {win_rate_icon} Taux de réussite: {win_rate:.1%}")
+        
+        # Métriques avancées si disponibles
+        if performance.get('profit_factor'):
+            click.echo(f"  📊 Profit Factor: {performance.get('profit_factor', 0):.2f}")
+        if performance.get('max_drawdown'):
+            click.echo(f"  📉 Max Drawdown: {performance.get('max_drawdown', 0):.2f}%")
+        if performance.get('sharpe_ratio'):
+            click.echo(f"  🎯 Sharpe Ratio: {performance.get('sharpe_ratio', 0):.3f}")
+            
+        # Temps de trading
+        if performance.get('start_time'):
+            click.echo(f"  ⏰ Début: {performance.get('start_time', 'N/A')}")
+        if performance.get('end_time'):
+            click.echo(f"  🏁 Fin: {performance.get('end_time', 'N/A')}")
+        elif strategy.get('status') == 'active':
+            click.echo(f"  🟢 En cours d'exécution...")
+
+# ============================================================================
+# COMMANDES PERFORMANCE TRACKING
+# ============================================================================
+
+@cli.group()
+def performance():
+    """📊 Gestion des performances et rankings"""
+    pass
+
+@performance.command('best-strategies')
+@click.option('--session-id', help='Filtrer par session spécifique')
+@click.option('--limit', default=10, type=int, help='Nombre de stratégies à afficher')
+@click.option('--metric', type=click.Choice(['pnl', 'win_rate', 'profit_factor']), 
+              default='pnl', help='Métrique de tri')
+@click.pass_context
+def best_strategies(ctx, session_id, limit, metric):
+    """Afficher les meilleures stratégies par session ou globalement"""
+    trading_cli = ctx.obj['cli']
+    
+    strategies_performance = []
+    
+    # Filtrer par session si spécifiée
+    if session_id:
+        if session_id not in trading_cli.sessions_registry:
+            click.echo(f"❌ Session '{session_id}' introuvable!")
+            return
+        
+        session = trading_cli.sessions_registry[session_id]
+        strategy_ids = session.get('strategies', [])
+        click.echo(f"📊 Meilleures stratégies de la session '{session['name']}'")
+    else:
+        strategy_ids = list(trading_cli.strategies_registry.keys())
+        click.echo(f"📊 Meilleures stratégies (toutes sessions)")
+    
+    # Collecter les performances
+    for strategy_id in strategy_ids:
+        if strategy_id in trading_cli.strategies_registry:
+            strategy = trading_cli.strategies_registry[strategy_id]
+            performance = strategy.get('performance', {})
+            
+            if not performance:
+                continue
+                
+            pnl = 0
+            if strategy.get('current_balance') and strategy.get('initial_balance'):
+                pnl = strategy['current_balance'] - strategy['initial_balance']
+            
+            strategies_performance.append({
+                'id': strategy_id,
+                'name': strategy['name'],
+                'session': session_id or _find_strategy_session(trading_cli, strategy_id),
+                'pnl': pnl,
+                'win_rate': performance.get('win_rate', 0),
+                'profit_factor': performance.get('profit_factor', 0),
+                'total_trades': performance.get('total_trades', 0),
+                'balance': strategy.get('current_balance', 0)
+            })
+    
+    if not strategies_performance:
+        click.echo("❌ Aucune donnée de performance trouvée")
+        return
+    
+    # Trier selon la métrique
+    strategies_performance.sort(key=lambda x: x[metric], reverse=True)
+    strategies_performance = strategies_performance[:limit]
+    
+    click.echo("=" * 80)
+    table_data = []
+    
+    for i, strategy in enumerate(strategies_performance, 1):
+        rank_icon = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}"
+        pnl_icon = "📈" if strategy['pnl'] >= 0 else "📉"
+        
+        table_data.append([
+            rank_icon,
+            strategy['name'][:20] + "..." if len(strategy['name']) > 20 else strategy['name'],
+            strategy['session'][:12] + "..." if len(strategy['session']) > 12 else strategy['session'],
+            f"{pnl_icon} {strategy['pnl']:.2f}€",
+            f"{strategy['win_rate']:.1%}",
+            f"{strategy['profit_factor']:.2f}",
+            strategy['total_trades']
+        ])
+    
+    headers = ['Rank', 'Stratégie', 'Session', 'P&L', 'Win Rate', 'Profit Factor', 'Trades']
+    click.echo(tabulate(table_data, headers=headers, tablefmt='grid'))
+    
+    # Champion absolu
+    if strategies_performance:
+        champion = strategies_performance[0]
+        click.echo(f"\n🏆 CHAMPION: {champion['name']}")
+        click.echo(f"  💰 P&L: {champion['pnl']:.2f}€")
+        click.echo(f"  🎯 Win Rate: {champion['win_rate']:.1%}")
+        click.echo(f"  📊 Profit Factor: {champion['profit_factor']:.2f}")
+
+@performance.command('profitable-sessions')
+@click.option('--limit', default=10, type=int, help='Nombre de sessions à afficher')
+@click.option('--metric', type=click.Choice(['total_pnl', 'avg_strategy_pnl', 'best_strategy_pnl']), 
+              default='total_pnl', help='Métrique de tri')
+@click.pass_context
+def profitable_sessions(ctx, limit, metric):
+    """Lister les sessions les plus profitables"""
+    trading_cli = ctx.obj['cli']
+    
+    if not trading_cli.sessions_registry:
+        click.echo("❌ Aucune session trouvée")
+        return
+    
+    session_performances = []
+    
+    for session_id, session in trading_cli.sessions_registry.items():
+        strategies = session.get('strategies', [])
+        
+        if not strategies:
+            continue
+            
+        total_pnl = 0
+        strategy_pnls = []
+        valid_strategies = 0
+        
+        # Calculer P&L total et par stratégie
+        for strategy_id in strategies:
+            if strategy_id in trading_cli.strategies_registry:
+                strategy = trading_cli.strategies_registry[strategy_id]
+                
+                if strategy.get('current_balance') and strategy.get('initial_balance'):
+                    strategy_pnl = strategy['current_balance'] - strategy['initial_balance']
+                    total_pnl += strategy_pnl
+                    strategy_pnls.append(strategy_pnl)
+                    valid_strategies += 1
+        
+        if valid_strategies == 0:
+            continue
+            
+        avg_strategy_pnl = total_pnl / valid_strategies if valid_strategies > 0 else 0
+        best_strategy_pnl = max(strategy_pnls) if strategy_pnls else 0
+        
+        session_performances.append({
+            'id': session_id,
+            'name': session['name'],
+            'mode': session['mode'],
+            'total_pnl': total_pnl,
+            'avg_strategy_pnl': avg_strategy_pnl,
+            'best_strategy_pnl': best_strategy_pnl,
+            'strategies_count': valid_strategies,
+            'created_at': session.get('created_at', '')
+        })
+    
+    if not session_performances:
+        click.echo("❌ Aucune donnée de performance trouvée")
+        return
+    
+    # Trier selon la métrique
+    session_performances.sort(key=lambda x: x[metric], reverse=True)
+    session_performances = session_performances[:limit]
+    
+    click.echo(f"📊 TOP {limit} SESSIONS LES PLUS PROFITABLES (par {metric})")
+    click.echo("=" * 90)
+    
+    table_data = []
+    for i, session in enumerate(session_performances, 1):
+        rank_icon = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}"
+        pnl_icon = "📈" if session['total_pnl'] >= 0 else "📉"
+        
+        table_data.append([
+            rank_icon,
+            session['name'][:25] + "..." if len(session['name']) > 25 else session['name'],
+            session['mode'],
+            session['strategies_count'],
+            f"{pnl_icon} {session['total_pnl']:.2f}€",
+            f"{session['avg_strategy_pnl']:.2f}€",
+            f"{session['best_strategy_pnl']:.2f}€",
+            session['created_at'][:10]
+        ])
+    
+    headers = ['Rank', 'Session', 'Mode', 'Stratégies', 'P&L Total', 'P&L Moyen', 'Meilleur P&L', 'Créé']
+    click.echo(tabulate(table_data, headers=headers, tablefmt='grid'))
+    
+    # Session championne
+    if session_performances:
+        champion = session_performances[0]
+        click.echo(f"\n🏆 SESSION CHAMPIONNE: {champion['name']}")
+        click.echo(f"  💰 P&L Total: {champion['total_pnl']:.2f}€")
+        click.echo(f"  📊 {champion['strategies_count']} stratégies")
+        click.echo(f"  🎯 P&L moyen par stratégie: {champion['avg_strategy_pnl']:.2f}€")
+        click.echo(f"  🌟 Meilleure stratégie: {champion['best_strategy_pnl']:.2f}€")
+
+def _find_strategy_session(trading_cli, strategy_id):
+    """Trouve la session d'une stratégie"""
+    for session_id, session in trading_cli.sessions_registry.items():
+        if strategy_id in session.get('strategies', []):
+            return session_id
+    return "N/A"
+
+def _update_strategy_performance_on_completion(trading_cli, strategy_id):
+    """Met à jour les performances d'une stratégie à la fin de son exécution"""
+    if strategy_id not in trading_cli.strategies_registry:
+        return
+        
+    strategy = trading_cli.strategies_registry[strategy_id]
+    
+    # Simuler des données de performance (dans un vrai système, on récupérerait depuis la DB)
+    import random
+    
+    performance = {
+        'total_trades': random.randint(10, 100),
+        'winning_trades': 0,
+        'losing_trades': 0,
+        'win_rate': 0,
+        'profit_factor': 0,
+        'max_drawdown': random.uniform(0, 15),
+        'sharpe_ratio': random.uniform(-1, 3),
+        'end_time': datetime.now(timezone.utc).isoformat()
+    }
+    
+    # Calculer win rate et autres métriques
+    total_trades = performance['total_trades']
+    performance['winning_trades'] = random.randint(int(total_trades * 0.3), int(total_trades * 0.8))
+    performance['losing_trades'] = total_trades - performance['winning_trades']
+    performance['win_rate'] = performance['winning_trades'] / total_trades if total_trades > 0 else 0
+    performance['profit_factor'] = random.uniform(0.5, 3.0)
+    
+    strategy['performance'] = performance
+    trading_cli._save_configuration()
+    
+    return performance
+
+def _update_session_best_strategy(trading_cli, session_id):
+    """Met à jour la meilleure stratégie d'une session"""
+    if session_id not in trading_cli.sessions_registry:
+        return
+        
+    session = trading_cli.sessions_registry[session_id]
+    strategies = session.get('strategies', [])
+    
+    if not strategies:
+        return
+        
+    best_strategy = None
+    best_pnl = float('-inf')
+    
+    for strategy_id in strategies:
+        if strategy_id in trading_cli.strategies_registry:
+            strategy = trading_cli.strategies_registry[strategy_id]
+            
+            if strategy.get('current_balance') and strategy.get('initial_balance'):
+                pnl = strategy['current_balance'] - strategy['initial_balance']
+                
+                if pnl > best_pnl:
+                    best_pnl = pnl
+                    best_strategy = {
+                        'id': strategy_id,
+                        'name': strategy['name'],
+                        'pnl': pnl,
+                        'performance': strategy.get('performance', {})
+                    }
+    
+    if best_strategy:
+        session['best_strategy'] = best_strategy
+        session['session_completed_at'] = datetime.now(timezone.utc).isoformat()
+        trading_cli._save_configuration()
+        
+        return best_strategy
+    
+    return None
 
 # ============================================================================
 # COMMANDES TEST (V3 + Multi-session)
@@ -1119,6 +1576,37 @@ def test_multi_session(ctx, count, duration):
 # ============================================================================
 # COMMANDES UTILITAIRES
 # ============================================================================
+
+@cli.command('entities')
+@click.option('--type', 'entity_type', type=click.Choice(['sessions', 'strategies', 'all']), 
+              default='all', help='Type d\'entités à lister')
+@click.pass_context
+def list_entities(ctx, entity_type):
+    """Lister toutes les entités disponibles pour les filtres intelligents"""
+    trading_cli = ctx.obj['cli']
+    
+    if entity_type in ['sessions', 'all']:
+        click.echo("📅 SESSIONS DISPONIBLES:")
+        if not trading_cli.sessions_registry:
+            click.echo("  Aucune session configurée")
+        else:
+            for session_id, session in trading_cli.sessions_registry.items():
+                click.echo(f"  • {session_id} ({session['name']})")
+    
+    if entity_type in ['strategies', 'all']:
+        click.echo("\n🎯 STRATÉGIES DISPONIBLES:")
+        if not trading_cli.strategies_registry:
+            click.echo("  Aucune stratégie configurée")
+        else:
+            for strategy_id, strategy in trading_cli.strategies_registry.items():
+                click.echo(f"  • {strategy_id} ({strategy['name']})")
+    
+    if entity_type == 'all':
+        click.echo("\n💡 UTILISATION DES FILTRES:")
+        click.echo("  Les commandes acceptent maintenant les noms partiels:")
+        click.echo("  - IDs complets: demo_unified_session")
+        click.echo("  - Noms partiels: demo, unified, etc.")
+        click.echo("  - Recherche floue automatique avec suggestions")
 
 @cli.command('version')
 def version():

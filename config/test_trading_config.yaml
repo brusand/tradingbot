@@ -1,0 +1,362 @@
+indicators:
+  EMA:
+    default_parameters:
+      period: 20
+    description: Exponential Moving Average
+    source: close
+    type: EMA
+    workflow_support: true
+  MACD:
+    default_parameters:
+      fast_period: 12
+      signal_period: 9
+      slow_period: 26
+    description: Moving Average Convergence Divergence
+    source: close
+    type: MACD
+    workflow_support: true
+  RSI:
+    default_parameters:
+      period: 14
+    description: Relative Strength Index
+    source: close
+    type: RSI
+    workflow_support: true
+  SMA:
+    default_parameters:
+      period: 20
+    description: Simple Moving Average
+    source: close
+    type: SMA
+    workflow_support: true
+risk_profiles:
+  aggressive:
+    max_concurrent_trades: 5
+    name: "Profil Agressif"
+    position_size_value: 5.0
+    stop_loss_percent: 1.5
+    take_profit_percent: 6.0
+  conservative:
+    max_concurrent_trades: 2
+    name: "Profil Conservateur"
+    position_size_value: 1.0
+    stop_loss_percent: 3.0
+    take_profit_percent: 3.0
+  default:
+    max_concurrent_trades: 3
+    name: "Profil par défaut"
+    position_size_value: 2.0
+    stop_loss_percent: 2.0
+    take_profit_percent: 4.0
+sessions:
+  kraken_live_session:
+    best_strategy:
+      id: btc_scalping_live
+      name: BTC Scalping Live
+      performance:
+        end_time: '2025-05-31T16:45:33.789123+00:00'
+        losing_trades: 18
+        max_drawdown: 7.2
+        profit_factor: 2.85
+        sharpe_ratio: 2.45
+        start_time: '2025-05-31T09:00:00.123456+00:00'
+        total_trades: 134
+        win_rate: 0.866
+        winning_trades: 116
+      pnl: 2847.65
+    created_at: '2025-05-31T08:30:15.987654+00:00'
+    id: kraken_live_session
+    mode: live
+    name: Kraken Live Trading Session
+    session_completed_at: '2025-05-31T16:45:40.789123+00:00'
+    start_time: '2025-05-31T09:00:00.123456+00:00'
+    status: stopped
+    strategies:
+    - btc_scalping_live
+    - eth_swing_live
+    workflow_enabled: true
+  kraken_paper_session:
+    best_strategy:
+      id: dot_momentum_paper
+      name: DOT Momentum Paper
+      performance:
+        end_time: '2025-05-31T18:30:25.654321+00:00'
+        losing_trades: 8
+        max_drawdown: 4.8
+        profit_factor: 3.42
+        sharpe_ratio: 3.15
+        start_time: '2025-05-31T10:15:30.456789+00:00'
+        total_trades: 45
+        win_rate: 0.822
+        winning_trades: 37
+      pnl: 1456.78
+    created_at: '2025-05-31T09:45:22.456789+00:00'
+    id: kraken_paper_session
+    mode: paper
+    name: Kraken Paper Trading Session
+    session_completed_at: '2025-05-31T18:30:35.654321+00:00'
+    start_time: '2025-05-31T10:15:30.456789+00:00'
+    status: stopped
+    strategies:
+    - ada_breakout_paper
+    - dot_momentum_paper
+    workflow_enabled: true
+strategies:
+  ada_breakout_paper:
+    created_at: '2025-05-31T09:50:10.111222+00:00'
+    current_balance: 5234.56
+    id: ada_breakout_paper
+    indicators:
+      EMA_20:
+        parameters:
+          period: 20
+        source: close
+        type: EMA
+      RSI_14:
+        parameters:
+          period: 14
+        source: close
+        type: RSI
+      SMA_50:
+        parameters:
+          period: 50
+        source: close
+        type: SMA
+    initial_balance: 5000.0
+    kraken_data:
+      last_price: 0.4567
+      pair: ADAUSD
+      volume_24h: 234567.89
+      high_24h: 0.4789
+      low_24h: 0.4321
+      bid: 0.4565
+      ask: 0.4569
+      spread_pct: 0.088
+      trades_24h: 2345
+    name: ADA Breakout Paper
+    parameters:
+      breakout_period: 20
+      volume_threshold: 1.5
+      ema_period: 20
+      confirmation_candles: 3
+    performance:
+      end_time: '2025-05-31T18:25:15.333444+00:00'
+      losing_trades: 3
+      max_drawdown: 2.1
+      profit_factor: 1.95
+      sharpe_ratio: 1.78
+      start_time: '2025-05-31T10:15:30.456789+00:00'
+      total_trades: 18
+      win_rate: 0.833
+      winning_trades: 15
+    risk_management:
+      max_concurrent_trades: 2
+      max_daily_loss: 250.0
+      max_position_size: 0.02
+      position_size_method: percent
+      risk_ratio: 2.5
+      stop_loss_percent: 1.8
+      take_profit_percent: 4.5
+    signal_rules:
+      long_condition: close > EMA_20 & volume > volume_sma * 1.5 & RSI_14 < 75
+      short_condition: close < EMA_20 & volume > volume_sma * 1.5 & RSI_14 > 25
+    status: completed
+    symbol: ADAUSD
+    timeframe: 5m
+    workflow_enabled: true
+  btc_scalping_live:
+    created_at: '2025-05-31T08:35:45.123456+00:00'
+    current_balance: 12847.65
+    id: btc_scalping_live
+    indicators:
+      EMA_8:
+        parameters:
+          period: 8
+        source: close
+        type: EMA
+      EMA_21:
+        parameters:
+          period: 21
+        source: close
+        type: EMA
+      RSI_5:
+        parameters:
+          period: 5
+        source: close
+        type: RSI
+    initial_balance: 10000.0
+    kraken_data:
+      last_price: 50123.45
+      pair: XXBTZUSD
+      volume_24h: 1425.123456
+      high_24h: 50567.89
+      low_24h: 49234.56
+      bid: 50123.30
+      ask: 50123.50
+      spread_pct: 0.004
+      trades_24h: 8934
+    name: BTC Scalping Live
+    parameters:
+      scalp_target: 0.15
+      max_hold_time: 300
+      volume_filter: 2.0
+      fast_ema: 8
+      slow_ema: 21
+    performance:
+      end_time: '2025-05-31T16:45:33.789123+00:00'
+      losing_trades: 18
+      max_drawdown: 7.2
+      profit_factor: 2.85
+      sharpe_ratio: 2.45
+      start_time: '2025-05-31T09:00:00.123456+00:00'
+      total_trades: 134
+      win_rate: 0.866
+      winning_trades: 116
+    risk_management:
+      max_concurrent_trades: 5
+      max_daily_loss: 500.0
+      max_position_size: 0.05
+      position_size_method: percent
+      risk_ratio: 3.0
+      stop_loss_percent: 0.8
+      take_profit_percent: 2.4
+    signal_rules:
+      long_condition: EMA_8 > EMA_21 & RSI_5 < 80 & volume > volume_avg * 2
+      short_condition: EMA_8 < EMA_21 & RSI_5 > 20 & volume > volume_avg * 2
+    status: completed
+    symbol: XXBTZUSD
+    timeframe: 1m
+    workflow_enabled: true
+  dot_momentum_paper:
+    created_at: '2025-05-31T09:55:33.789123+00:00'
+    current_balance: 6456.78
+    id: dot_momentum_paper
+    indicators:
+      MACD_12_26_9:
+        parameters:
+          fast_period: 12
+          signal_period: 9
+          slow_period: 26
+        source: close
+        type: MACD
+      RSI_14:
+        parameters:
+          period: 14
+        source: close
+        type: RSI
+      SMA_20:
+        parameters:
+          period: 20
+        source: close
+        type: SMA
+    initial_balance: 5000.0
+    kraken_data:
+      last_price: 6.789
+      pair: DOTUSD
+      volume_24h: 567890.12
+      high_24h: 7.123
+      low_24h: 6.456
+      bid: 6.787
+      ask: 6.791
+      spread_pct: 0.059
+      trades_24h: 4567
+    name: DOT Momentum Paper
+    parameters:
+      momentum_threshold: 0.02
+      macd_signal_threshold: 0.001
+      trend_confirmation: 3
+      volume_multiplier: 1.8
+    performance:
+      end_time: '2025-05-31T18:30:25.654321+00:00'
+      losing_trades: 8
+      max_drawdown: 4.8
+      profit_factor: 3.42
+      sharpe_ratio: 3.15
+      start_time: '2025-05-31T10:15:30.456789+00:00'
+      total_trades: 45
+      win_rate: 0.822
+      winning_trades: 37
+    risk_management:
+      max_concurrent_trades: 3
+      max_daily_loss: 300.0
+      max_position_size: 0.03
+      position_size_method: percent
+      risk_ratio: 2.8
+      stop_loss_percent: 2.2
+      take_profit_percent: 6.16
+    signal_rules:
+      long_condition: MACD > MACD_Signal & RSI_14 < 70 & close > SMA_20
+      short_condition: MACD < MACD_Signal & RSI_14 > 30 & close < SMA_20
+    status: completed
+    symbol: DOTUSD
+    timeframe: 15m
+    workflow_enabled: true
+  eth_swing_live:
+    created_at: '2025-05-31T08:40:20.987654+00:00'
+    current_balance: 9876.54
+    id: eth_swing_live
+    indicators:
+      EMA_50:
+        parameters:
+          period: 50
+        source: close
+        type: EMA
+      MACD_12_26_9:
+        parameters:
+          fast_period: 12
+          signal_period: 9
+          slow_period: 26
+        source: close
+        type: MACD
+      RSI_21:
+        parameters:
+          period: 21
+        source: close
+        type: RSI
+      SMA_200:
+        parameters:
+          period: 200
+        source: close
+        type: SMA
+    initial_balance: 10000.0
+    kraken_data:
+      last_price: 3012.34
+      pair: XETHZUSD
+      volume_24h: 2567.890123
+      high_24h: 3089.45
+      low_24h: 2987.65
+      bid: 3012.20
+      ask: 3012.48
+      spread_pct: 0.009
+      trades_24h: 5678
+    name: ETH Swing Live
+    parameters:
+      swing_period: 4
+      trend_strength: 0.75
+      reversal_confirmation: 2
+      macd_divergence: true
+    performance:
+      end_time: '2025-05-31T16:40:18.123789+00:00'
+      losing_trades: 6
+      max_drawdown: 3.5
+      profit_factor: 1.42
+      sharpe_ratio: 1.15
+      start_time: '2025-05-31T09:00:00.123456+00:00'
+      total_trades: 23
+      win_rate: 0.739
+      winning_trades: 17
+    risk_management:
+      max_concurrent_trades: 2
+      max_daily_loss: 400.0
+      max_position_size: 0.03
+      position_size_method: percent
+      risk_ratio: 2.2
+      stop_loss_percent: 1.5
+      take_profit_percent: 3.3
+    signal_rules:
+      long_condition: MACD > MACD_Signal & RSI_21 < 65 & close > EMA_50 & EMA_50 > SMA_200
+      short_condition: MACD < MACD_Signal & RSI_21 > 35 & close < EMA_50 & EMA_50 < SMA_200
+    status: completed
+    symbol: XETHZUSD
+    timeframe: 1h
+    workflow_enabled: true
