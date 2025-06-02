@@ -35,6 +35,8 @@ class StrategyConfig:
     parameters: Dict[str, Any]
     timeframe: str
     pairs: List[str]
+    since: str
+    to: str
     risk_config: Optional[RiskConfig] = None  # Risk management au niveau stratégie
     initial_balance: float = 10000.0  # Balance initiale de la stratégie
     current_balance: Optional[float] = None  # Balance courante (sera mise à jour)

@@ -100,7 +100,7 @@ class WorkflowIntegrationTester:
                 'max_position_size': 0.1
             },
             timeframe="5m",
-            pairs=["BTCUSD"]
+            pairs=["BTCUSDC"]
         )
         
         # Démarrer la stratégie
@@ -138,7 +138,7 @@ class WorkflowIntegrationTester:
                 'max_position_size': 0.1
             },
             timeframe="5m",
-            pairs=["BTCUSD"]
+            pairs=["BTCUSDC"]
         )
         
         await self.strategy_manager.start_strategy(self.test_session_id, strategy_config)
@@ -165,7 +165,7 @@ class WorkflowIntegrationTester:
             }
             
             # Publier la candle
-            channel = CHANNELS.MARKET_DATA.format(symbol="BTCUSD", timeframe="5m")
+            channel = CHANNELS.MARKET_DATA.format(symbol="BTCUSDC", timeframe="5m")
             await self.pubsub.publish(channel, candle)
             
             self.test_metrics['candles_sent'] += 1

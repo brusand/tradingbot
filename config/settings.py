@@ -17,7 +17,8 @@ class DatabaseConfig:
 class KrakenConfig:
     api_key: str = ""
     api_secret: str = ""
-    sandbox: bool = True
+    sandbox: bool = False
+    paper: bool = True
     rate_limit: int = 20
     timeout: int = 30
 
@@ -51,6 +52,7 @@ class Settings:
             api_key=os.getenv("KRAKEN_API_KEY", ""),
             api_secret=os.getenv("KRAKEN_API_SECRET", ""),
             sandbox=os.getenv("KRAKEN_SANDBOX", "true").lower() == "true",
+            paper=os.getenv("KRAKEN_PAPER", "true").lower() == "true",
             rate_limit=int(os.getenv("KRAKEN_RATE_LIMIT", "20")),
             timeout=int(os.getenv("KRAKEN_TIMEOUT", "30"))
         )

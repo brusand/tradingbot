@@ -193,11 +193,14 @@ class TradingStrategy:
         """Démarre la stratégie avec queue de traitement"""
         self.is_running = True
         
-        # S'abonner aux candles
-        await self._subscribe_to_candles()
+        # S'abonner aux réponses du connecteur Kraken (nouveau pattern)
+        await self._subscribe_to_candle_responses()
         
         # S'abonner aux services
         await self._subscribe_to_services()
+        
+        # Publier une demande de données au connecteur Kraken
+        await self._request_market_data()
         
         # Démarrer le worker de traitement des candles
         self.candle_processor_task = asyncio.create_task(self._candle_processor_worker())
@@ -225,6 +228,77 @@ class TradingStrategy:
         )
         await self.pubsub.subscribe(channel, self.on_new_candle, weak_ref=False)
         logger.info(f"Subscribed to candles: {channel}")
+    
+    async def _subscribe_to_candle_responses(self):
+        """S'abonne aux réponses du connecteur Kraken (nouveau pattern)"""
+        symbol = self.config.pairs[0] if self.config.pairs else getattr(self.config, 'symbol', 'BTCUSD')
+        timeframe = getattr(self.config, 'timeframe', '5m')
+        
+        # Canal de réponse : market.data.<pair>.<tf>.candles
+        response_channel = f"market.data.{symbol}.{timeframe}.{self.config.name}"
+        await self.pubsub.subscribe(response_channel, self.on_kraken_candle_response, weak_ref=False)
+        logger.info(f"Subscribed to Kraken responses: {response_channel}")
+    
+    async def _request_market_data(self):
+        """Publie une demande de données au connecteur Kraken"""
+        symbol = self.config.pairs[0] if self.config.pairs else getattr(self.config, 'symbol', 'BTCUSD')
+        timeframe = getattr(self.config, 'timeframe', '5m')
+        
+        # Canal de demande : market.data.<pair>.<tf>
+        request_channel = f"market.data.{symbol}.{timeframe}"
+        
+        # Message de demande avec la stratégie émettrice
+        request_data = {
+            "strategy_id": self.config.name,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "since": self.config.since,
+            "to": self.config.to,
+            "action": "subscribe",
+            "timestamp": datetime.now(timezone.utc).timestamp()
+        }
+        
+        await self.pubsub.publish(request_channel, request_data)
+        logger.info(f"Published market data request: {request_channel}")
+    
+    async def on_kraken_candle_response(self, response_data: Dict, metadata):
+        """Traite les réponses du connecteur Kraken avec DataFrame associée"""
+        try:
+            # Vérifier que la réponse est pour cette stratégie
+            if response_data.get("strategy_id") != self.config.name:
+                return  # Pas pour nous
+            
+            # Extraire les données de chandelle et le DataFrame
+            candle_data = response_data.get("candle")
+            dataframe = response_data.get("dataframe")
+            
+            if candle_data:
+                # Utiliser le DataFrame fourni ou utiliser celui existant
+                if dataframe is not None:
+                    # Convertir le DataFrame sérialisé en pandas DataFrame
+                    if isinstance(dataframe, list):
+                        self.dataframe = pd.DataFrame(dataframe)
+                    elif isinstance(dataframe, dict):
+                        self.dataframe = pd.DataFrame(dataframe)
+                    else:
+                        self.dataframe = dataframe
+                    logger.debug(f"Received DataFrame with {len(self.dataframe)} rows")
+                
+                # Traiter la chandelle normalement
+                await asyncio.wait_for(
+                    self.candle_queue.put(candle_data), 
+                    timeout=1.0
+                )
+                logger.debug(f"Kraken candle queued for {self.config.name}: {candle_data.get('timestamp')}")
+            else:
+                logger.warning("No candle data in Kraken response")
+                
+        except asyncio.TimeoutError:
+            logger.warning(f"Candle queue full for strategy {self.config.name}, dropping Kraken candle")
+            self.processing_metrics['errors'] += 1
+        except Exception as e:
+            logger.error(f"Error processing Kraken candle response: {e}")
+            self.processing_metrics['errors'] += 1
     
     async def _subscribe_to_services(self):
         """S'abonne aux services (indicateurs, balance, etc.)"""

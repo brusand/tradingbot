@@ -40,7 +40,7 @@ def cli(ctx):
 @click.option('--stop-loss', type=float, default=2.0, help='Stop loss percentage')
 @click.option('--take-profit', type=float, default=4.0, help='Take profit percentage')
 @click.pass_context
-def create_session(ctx, name, mode, strategy, pairs, timeframe, max_position, stop_loss, take_profit):
+def create_session(ctx, name, mode, strategy, pairs, timeframe, _since, _to, max_position, stop_loss, take_profit):
     """Create a new trading session"""
     async def _create():
         cli_instance = ctx.obj['cli']
@@ -58,7 +58,9 @@ def create_session(ctx, name, mode, strategy, pairs, timeframe, max_position, st
                 'max_position_size': max_position
             },
             timeframe=timeframe,
-            pairs=pair_list
+            pairs=pair_list,
+            since=_since,
+            to=_to
         )
         
         # Create risk config

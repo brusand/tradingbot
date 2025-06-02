@@ -7,7 +7,12 @@
       "Bash(timeout:*)",
       "Bash(grep:*)",
       "Bash(sed:*)",
-      "Bash(TRADING_CONFIG_PATH=config/test_trading_config.yaml python cli/trading_cli_v4.py performance profitable-sessions)"
+      "Bash(TRADING_CONFIG_PATH=config/test_trading_config.yaml python cli/trading_cli_v4.py performance profitable-sessions)",
+      "Bash(find:*)",
+      "Bash(rg:*)",
+      "WebFetch(domain:docs.kraken.com)",
+      "Bash(ls:*)",
+      "Bash(chmod:*)"
     ],
     "deny": []
   }

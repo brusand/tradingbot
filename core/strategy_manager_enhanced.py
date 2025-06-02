@@ -9,11 +9,12 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone
 
 from core.strategy_workflow import TradingStrategy, IndicatorConfig, SignalRule
-from core.indicators_service import IndicatorsService
+from services.indicators_service import IndicatorsService
 from core.pubsub_engine import PubSubEngine
 from core.channels import CHANNELS
 from data.models import StrategyConfig, SessionMode
 from data.persistence import DatabaseManager
+from services.candles_service import CandlesService
 from strategies.performance_tracker import PerformanceTracker
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,8 @@ class EnhancedStrategyConfig:
         self.pairs = base_config.pairs
         self.timeframe = base_config.timeframe
         self.parameters = base_config.parameters
-        
+        self.since = base_config.since
+        self.to = base_config.to
         # Nouvelles propriétés pour le workflow
         self.max_dataframe_size = 1000
         self.indicators = {}
@@ -207,7 +209,7 @@ class StrategyManagerEnhanced:
         
         # Services
         self.indicators_service = IndicatorsService(pubsub)
-        
+        self.candles_service = CandlesService(pubsub)
         # Stratégies actives
         self.active_strategies: Dict[str, TradingStrategy] = {}
         
@@ -223,8 +225,9 @@ class StrategyManagerEnhanced:
     async def initialize(self):
         """Initialise le manager de stratégies"""
         # Démarrer le service d'indicateurs
-        await self.indicators_service.start_service()
-        
+        await self.indicators_service.start()
+        await self.candles_service.start()
+
         self.global_metrics['service_start_time'] = datetime.now(timezone.utc)
         logger.info("Enhanced Strategy Manager initialized")
     

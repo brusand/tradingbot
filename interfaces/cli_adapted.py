@@ -159,7 +159,7 @@ def list_sessions(ctx):
 @session.command('show')
 @click.argument('session_id')
 @click.option('--detailed', is_flag=True, help='Afficher les métriques de performance détaillées')
-@click.option('--trades', is_flag=True, help='Afficher l'historique des trades')
+@click.option('--trades', is_flag=True, help='Afficher l historique des trades')
 @click.option('--export', type=click.Path(), help='Exporter le rapport vers un fichier JSON')
 @click.pass_context
 def show_session(ctx, session_id, detailed, trades, export):

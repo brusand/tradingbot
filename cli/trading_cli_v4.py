@@ -63,7 +63,9 @@ except ImportError:
 # Imports workflow avancé
 try:
     from core.strategy_workflow import TradingStrategy, IndicatorConfig, SignalRule
-    from core.indicators_service import IndicatorsService
+    #from core.indicators_service import IndicatorsService
+    from services.indicators_service import IndicatorsService
+    from services.candles_service import CandlesService
     from core.strategy_manager_enhanced import StrategyManagerEnhanced, EnhancedStrategyConfig
     from core.pubsub_engine import PubSubEngine
     from core.channels import CHANNELS
@@ -101,6 +103,7 @@ class TradingCLI:
         # Registres de configuration (CLI Adapted)
         self.strategies_registry = {}
         self.indicators_registry = {}
+        self.candles_registry = {}
         self.risk_profiles_registry = {}
         self.sessions_registry = {}
         
@@ -216,9 +219,11 @@ class TradingCLI:
             name=strategy_data['name'],
             parameters=strategy_data.get('parameters', {}),
             timeframe=strategy_data.get('timeframe', '5m'),
-            pairs=[strategy_data.get('symbol', 'BTCUSD')],
+            pairs=[strategy_data.get('symbol', 'BTCUSDC')],
+            since=strategy_data.get('since', '2025-01-01 00:00:00'),
+            to=strategy_data.get('now', 'now'),
             risk_config=risk_config,
-            initial_balance=strategy_data.get('initial_balance', 10000.0),
+            initial_balance=strategy_data.get('initial_balance', 100.0),
             current_balance=strategy_data.get('current_balance')
         )
         
@@ -432,7 +437,9 @@ def create_session(ctx, name, mode, no_workflow, workflow, initial_balance, coun
                     name=session_name,
                     parameters={'initial_balance': initial_balance},
                     timeframe='5m',
-                    pairs=['BTCUSD']
+                    pairs=['BTCUSDC'],
+                    since="2025-05-01 00:00:00",
+                    to="now"
                 )
                 
                 session_mode = SessionMode.SANDBOX if mode == 'sandbox' else SessionMode.PAPER if mode == 'paper' else SessionMode.LIVE
@@ -531,7 +538,9 @@ def start_session(ctx, session_id, force):
                             name=enhanced_config.name,
                             parameters=enhanced_config.parameters,
                             timeframe=enhanced_config.timeframe,
-                            pairs=enhanced_config.pairs
+                            pairs=enhanced_config.pairs,
+                            since = enhanced_config.since,
+                            to = enhanced_config.to
                         )
                         
                         success = await trading_cli.strategy_manager_enhanced.start_strategy(
@@ -1462,7 +1471,9 @@ def test_workflow(ctx, duration, strategies):
                 name=enhanced_config.name,
                 parameters=enhanced_config.parameters,
                 timeframe=enhanced_config.timeframe,
-                pairs=enhanced_config.pairs
+                pairs=enhanced_config.pairs,
+                since=enhanced_config.since,
+                to=enhanced_config.to
             )
             
             session_id = f"test_strategy_{i+1}"
