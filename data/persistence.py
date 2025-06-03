@@ -54,7 +54,6 @@ class DatabaseManager:
                 session.name,
                 session.mode.value,
                 json.dumps(session.strategy.__dict__),
-                json.dumps(session.risk_params.__dict__),
                 session.created_at.isoformat(),
                 session.updated_at.isoformat(),
                 session.status.value,
@@ -110,9 +109,8 @@ class DatabaseManager:
     
     def _row_to_session(self, row) -> Session:
         strategy_data = json.loads(row[3])
-        risk_data = json.loads(row[4])
-        state_data = json.loads(row[8])
-        metrics_data = json.loads(row[9])
+        state_data = json.loads(row[7])
+        metrics_data = json.loads(row[8])
         
         strategy = StrategyConfig(
             name=strategy_data['name'],
@@ -120,15 +118,8 @@ class DatabaseManager:
             timeframe=strategy_data['timeframe'],
             pairs=strategy_data['pairs']
         )
-        
-        risk_params = RiskConfig(
-            max_position_size=risk_data['max_position_size'],
-            stop_loss_pct=risk_data['stop_loss_pct'],
-            take_profit_pct=risk_data['take_profit_pct'],
-            max_daily_loss=risk_data['max_daily_loss'],
-            max_exposure_pct=risk_data['max_exposure_pct']
-        )
-        
+
+
         performance_metrics = PerformanceMetrics(
             total_pnl=metrics_data['total_pnl'],
             win_rate=metrics_data['win_rate'],
@@ -144,10 +135,9 @@ class DatabaseManager:
             name=row[1],
             mode=SessionMode(row[2]),
             strategy=strategy,
-            risk_params=risk_params,
-            created_at=datetime.fromisoformat(row[5]),
-            updated_at=datetime.fromisoformat(row[6]),
-            status=SessionStatus(row[7]),
+            created_at=datetime.fromisoformat(row[4]),
+            updated_at=datetime.fromisoformat(row[5]),
+            status=SessionStatus(row[6]),
             state=state_data,
             performance_metrics=performance_metrics
         )

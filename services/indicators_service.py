@@ -152,14 +152,14 @@ class TechnicalIndicators:
     @indicator(
         name="SMA",
         description="Simple Moving Average",
-        default_params={"period": 20},
+        default_params={"period": 20, "source": "close"},
         required_columns=["close"],
         category="moving_averages"
     )
-    async def simple_moving_average(df: pd.DataFrame, period: int = 20, name: str = None) -> pd.DataFrame:
+    async def simple_moving_average(df: pd.DataFrame, period: int = 20, source= "close", name: str = None) -> pd.DataFrame:
         """Calcule la moyenne mobile simple"""
         column_name = name or f"SMA_{period}"
-        sma_values = df['close'].rolling(window=period).mean()
+        sma_values = df[source].rolling(window=period).mean()
         return pd.DataFrame({column_name: sma_values})
 
 
@@ -167,14 +167,14 @@ class TechnicalIndicators:
     @indicator(
         name="EMA",
         description="Exponential Moving Average",
-        default_params={"period": 20},
+        default_params={"period": 20, "source": "close"},
         required_columns=["close"],
         category="moving_averages"
     )
-    async def exponential_moving_average(df: pd.DataFrame, period: int = 20, name: str = None) -> pd.DataFrame:
+    async def exponential_moving_average(df: pd.DataFrame, period: int = 20, source="close", name: str = None) -> pd.DataFrame:
         """Calcule la moyenne mobile exponentielle"""
         column_name = name or f"EMA_{period}"
-        ema_values = df['close'].ewm(span=period).mean()
+        ema_values = df[source].ewm(span=period).mean()
         return pd.DataFrame({column_name: ema_values})
 
 
@@ -207,7 +207,7 @@ class TechnicalIndicators:
     @indicator(
         name="MACD",
         description="Moving Average Convergence Divergence",
-        default_params={"fast_period": 12, "slow_period": 26, "signal_period": 9},
+        default_params={"fast_period": 12, "slow_period": 26, "signal_period": 9, "source": "close"},
         required_columns=["close"],
         output_columns=["macd", "signal", "histogram"],
         category="momentum"

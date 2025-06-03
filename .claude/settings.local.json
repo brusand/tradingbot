@@ -12,7 +12,9 @@
       "Bash(rg:*)",
       "WebFetch(domain:docs.kraken.com)",
       "Bash(ls:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(rm:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }

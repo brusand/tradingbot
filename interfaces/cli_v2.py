@@ -82,8 +82,7 @@ def create_sessions(ctx, name, mode, strategy, pairs, timeframe, max_position, s
             session = await cli_instance.session_manager.create_session(
                 name=session_name,
                 mode=SessionMode(mode),
-                strategy=strategy_config,
-                risk_params=risk_config
+                strategy=strategy_config
             )
             
             created_sessions.append(session)

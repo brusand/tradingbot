@@ -200,8 +200,7 @@ class SessionReplayManager:
             new_session = await session_manager.create_session(
                 name=new_name,
                 mode=original_session.mode,
-                strategy=original_session.strategy,
-                risk_params=original_session.risk_params
+                strategy=original_session.strategy
             )
             
             # Apply state from snapshot if available

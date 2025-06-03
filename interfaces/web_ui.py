@@ -204,8 +204,7 @@ async def create_session(session_data: dict):
         session = await multi_session_manager.session_manager.create_session(
             name=session_data["name"],
             mode=SessionMode(session_data.get("mode", "paper")),
-            strategy=strategy_config,
-            risk_params=risk_config
+            strategy=strategy_config
         )
         
         return {"success": True, "session_id": session.id}

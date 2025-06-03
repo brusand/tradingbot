@@ -1,191 +1,43 @@
-indicators:
-  EMA:
-    default_parameters:
-      period: 20
-    description: Exponential Moving Average
-    source: close
-    type: EMA
-    workflow_support: true
-  MACD:
-    default_parameters:
-      fast_period: 12
-      signal_period: 9
-      slow_period: 26
-    description: Moving Average Convergence Divergence
-    source: close
-    type: MACD
-    workflow_support: true
-  RSI:
-    default_parameters:
-      period: 14
-    description: Relative Strength Index
-    source: close
-    type: RSI
-    workflow_support: true
-  SMA:
-    default_parameters:
-      period: 20
-    description: Simple Moving Average
-    source: close
-    type: SMA
-    workflow_support: true
-risk_profiles:
-  aggressive:
-    max_concurrent_trades: 5
-    max_daily_loss: 1000.0
-    max_drawdown_percent: 25.0
-    name: Profil Agressif
-    position_size_method: percent
-    position_size_value: 5.0
-    stop_loss_percent: 3.0
-    take_profit_percent: 6.0
-    trailing_stop: true
-  conservative:
-    max_concurrent_trades: 2
-    max_daily_loss: 200.0
-    max_drawdown_percent: 10.0
-    name: Profil Conservateur
-    position_size_method: percent
-    position_size_value: 1.0
-    stop_loss_percent: 1.5
-    take_profit_percent: 3.0
-    trailing_stop: false
-  default:
-    max_concurrent_trades: 3
-    max_daily_loss: 500.0
-    max_drawdown_percent: 20.0
-    name: "Profil par d\xE9faut"
-    position_size_method: percent
-    position_size_value: 2.0
-    stop_loss_percent: 2.0
-    take_profit_percent: 4.0
-    trailing_stop: false
-  moderate:
-    max_concurrent_trades: 3
-    max_daily_loss: 500.0
-    max_drawdown_percent: 15.0
-    name: "Profil Mod\xE9r\xE9"
-    position_size_method: percent
-    position_size_value: 2.0
-    stop_loss_percent: 2.0
-    take_profit_percent: 4.0
-    trailing_stop: true
+indicators: {}
 sessions:
-  demo_unified_session:
-    created_at: '2025-05-31T21:15:38.741383+00:00'
-    id: demo_unified_session
-    initial_balance: 10000.0
-    migrated_from: V3
-    migration_date: '2025-06-01T21:34:05.221267+00:00'
-    mode: sandbox
-    name: Demo Unified Session
-    status: configured
-    strategies:
-    - demo_unified
-    v4_features:
-      analytics_enabled: true
-      multi_session_compatible: true
-      portfolio_tracking: true
-    workflow_enabled: true
-  session_20250531_232748:
-    created_at: '2025-05-31T21:27:48.981002+00:00'
-    id: session_20250531_232748
-    migrated_from: V3
-    migration_date: '2025-06-01T21:34:05.221278+00:00'
-    mode: sandbox
-    name: Candles
-    start_time: '2025-06-02T10:06:18.760592+00:00'
+  session_20250602_180629:
+    created_at: '2025-06-02T16:06:29.804207+00:00'
+    id: session_20250602_180629
+    mode: paper
+    name: Test
+    start_time: '2025-06-02T16:07:43.443788+00:00'
     status: running
-    strategies:
-    - candles
-    v4_features:
-      analytics_enabled: true
-      multi_session_compatible: true
-      portfolio_tracking: true
+    strategies: []
     workflow_enabled: true
 strategies:
-  candles:
-    created_at: '2025-05-31T21:17:05.554346+00:00'
-    current_balance: 100.0
+  ema_crossover:
+    created_at: '2025-06-03T11:35:40.031074+00:00'
     end_date: now
-    id: candles
+    id: ema_crossover
     indicators:
-      RSI_14:
+      LONG:
         parameters:
-          period: 14
+          name: LONG
+          period: 100
+          source: close
         source: close
-        type: RSI
-      SMA_10:
+        type: EMA
+      SHORT:
         parameters:
-          period: 10
+          name: SHORT
+          period: 20
+          source: close
         source: close
-        type: SMA
-      SMA_30:
-        parameters:
-          period: 30
-        source: close
-        type: SMA
+        type: EMA
     initial_balance: 100.0
-    migrated_from: V3
-    migration_date: '2025-06-01T21:34:05.220933+00:00'
-    name: Candles
-    parameters:
-      long_window: 30
-      short_window: 10
-    risk_management:
-      max_concurrent_trades: 2
-      max_daily_loss: 500.0
-      max_position_size: 0.1
-      position_size_method: percent
-      risk_ratio: 2.0
-      stop_loss_percent: 2.0
-      take_profit_percent: 4.0
+    name: EMA CROSSOVER
+    parameters: {}
     risk_profile: default
     signal_rules:
-      long_condition: null
-      short_condition: null
-    start_date: null
+      long_condition: SHORT > LONG & SHORT[-1] < LONG[-1]
+      short_condition: SHORT < LONG & SHORT[-1] > LONG[-1]
+    start_date: '2025-01-01'
     status: inactive
-    symbol: ETHUSDC
+    symbol: BTCUSDC
     timeframe: 15m
-    v4_features:
-      analytics_enabled: true
-      multi_session_compatible: true
-      workflow_enhanced: true
-    workflow_enabled: true
-  demo_unified:
-    created_at: '2025-05-31T21:15:38.741358+00:00'
-    id: demo_unified
-    indicators:
-      RSI_14:
-        parameters:
-          period: 14
-        source: close
-        type: RSI
-      SMA_10:
-        parameters:
-          period: 10
-        source: close
-        type: SMA
-      SMA_30:
-        parameters:
-          period: 30
-        source: close
-        type: SMA
-    migrated_from: V3
-    migration_date: '2025-06-01T21:34:05.221250+00:00'
-    name: Demo Unified Strategy
-    parameters:
-      long_window: 30
-      short_window: 10
-    signal_rules:
-      long_condition: SMA_10 > SMA_30 & SMA_10[-1] <= SMA_30[-1] & RSI_14 < 70
-      short_condition: SMA_10 < SMA_30 & SMA_10[-1] >= SMA_30[-1] & RSI_14 > 30
-    status: configured
-    symbol: BTCUSD
-    timeframe: 5m
-    v4_features:
-      analytics_enabled: true
-      multi_session_compatible: true
-      workflow_enhanced: true
     workflow_enabled: true

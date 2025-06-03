@@ -104,7 +104,6 @@ class TradingCLI:
         self.strategies_registry = {}
         self.indicators_registry = {}
         self.candles_registry = {}
-        self.risk_profiles_registry = {}
         self.sessions_registry = {}
         
         # Cache pour performances
@@ -121,19 +120,22 @@ class TradingCLI:
             try:
                 with open(self.config_path, 'r') as f:
                     config = yaml.safe_load(f) or {}
-                    self.strategies_registry = config.get('strategies', {})
-                    self.indicators_registry = config.get('indicators', {})
-                    self.risk_profiles_registry = config.get('risk_profiles', {})
-                    self.sessions_registry = config.get('sessions', {})
+                    # S'assurer que les registres ne sont jamais None
+                    self.strategies_registry = config.get('strategies') or {}
+                    self.indicators_registry = config.get('indicators') or {}
+                    self.sessions_registry = config.get('sessions') or {}
             except Exception as e:
                 click.echo(f"⚠️ Erreur de chargement config: {e}")
+                # En cas d'erreur, initialiser avec des dictionnaires vides
+                self.strategies_registry = {}
+                self.indicators_registry = {}
+                self.sessions_registry = {}
     
     def _save_configuration(self):
         """Sauvegarde la configuration (CLI Adapted)"""
         config = {
             'strategies': self.strategies_registry,
             'indicators': self.indicators_registry,
-            'risk_profiles': self.risk_profiles_registry,
             'sessions': self.sessions_registry
         }
         
@@ -145,18 +147,8 @@ class TradingCLI:
             click.echo(f"⚠️ Erreur de sauvegarde config: {e}")
     
     def _initialize_defaults(self):
-        """Initialise les profils par défaut"""
-        if 'default' not in self.risk_profiles_registry:
-            self.risk_profiles_registry['default'] = {
-                'name': 'Profil par défaut',
-                'position_size_method': 'percent',
-                'position_size_value': 2.0,
-                'max_concurrent_trades': 3,
-                'max_daily_loss': 500.0,
-                'stop_loss_percent': 2.0,
-                'take_profit_percent': 4.0,
-                'trailing_stop': False
-            }
+        """Initialise les configurations par défaut"""
+        pass
     
     async def initialize_system(self):
         """Initialise le système complet"""
@@ -202,19 +194,6 @@ class TradingCLI:
         if not WORKFLOW_AVAILABLE:
             return None
         
-        # Créer RiskConfig depuis strategy risk_management
-        risk_config = None
-        if 'risk_management' in strategy_data:
-            risk_mgmt = strategy_data['risk_management']
-            risk_config = RiskConfig(
-                max_position_size=risk_mgmt.get('max_position_size', 0.1),
-                stop_loss_pct=risk_mgmt.get('stop_loss_percent', 2.0),
-                take_profit_pct=risk_mgmt.get('take_profit_percent', 4.0),
-                max_daily_loss=risk_mgmt.get('max_daily_loss', 500.0),
-                max_exposure_pct=risk_mgmt.get('max_exposure_pct', 10.0),
-                risk_ratio=risk_mgmt.get('risk_ratio', 2.0)
-            )
-        
         base_config = StrategyConfig(
             name=strategy_data['name'],
             parameters=strategy_data.get('parameters', {}),
@@ -222,7 +201,7 @@ class TradingCLI:
             pairs=[strategy_data.get('symbol', 'BTCUSDC')],
             since=strategy_data.get('since', '2025-01-01 00:00:00'),
             to=strategy_data.get('now', 'now'),
-            risk_config=risk_config,
+            risk_config=None,
             initial_balance=strategy_data.get('initial_balance', 100.0),
             current_balance=strategy_data.get('current_balance')
         )
@@ -259,13 +238,80 @@ class TradingCLI:
         
         return enhanced
 
+# Variable globale pour activer/désactiver les traces
+_TRACE_ENABLED = False
+
+def enable_trace():
+    """Active le mode trace"""
+    global _TRACE_ENABLED
+    _TRACE_ENABLED = True
+
+def disable_trace():
+    """Désactive le mode trace"""
+    global _TRACE_ENABLED
+    _TRACE_ENABLED = False
+
+def is_trace_enabled():
+    """Vérifie si le mode trace est activé"""
+    return _TRACE_ENABLED
+
+def trace_method(func_name: str, args: tuple = None, kwargs: dict = None):
+    """Log des appels de méthodes si trace activé"""
+    if not _TRACE_ENABLED:
+        return
+    
+    # Formater les arguments
+    args_str = ""
+    if args:
+        args_str = ", ".join(str(arg) for arg in args if arg is not None)
+    
+    kwargs_str = ""
+    if kwargs:
+        kwargs_str = ", ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+    
+    params_str = ", ".join(filter(None, [args_str, kwargs_str]))
+    
+    click.echo(f"🔍 [TRACE] {func_name}({params_str})", err=True)
+
+def trace_decorator(func):
+    """Décorateur pour tracer automatiquement les appels de fonction"""
+    import functools
+    
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        if _TRACE_ENABLED:
+            # Exclure le context click des arguments affichés
+            clean_args = []
+            clean_kwargs = {}
+            
+            for arg in args:
+                if not hasattr(arg, 'obj'):  # Exclure les contextes click
+                    clean_args.append(arg)
+            
+            for k, v in kwargs.items():
+                if k not in ['ctx'] and not hasattr(v, 'obj'):
+                    clean_kwargs[k] = v
+            
+            trace_method(func.__name__, tuple(clean_args), clean_kwargs)
+        
+        return func(*args, **kwargs)
+    return wrapper
+
 # Commande principale
 @click.group()
+@click.option('--trace', is_flag=True, help='Activer le mode trace pour débugger')
 @click.pass_context
-def cli(ctx):
+def cli(ctx, trace):
     """🚀 TradingCLI V4 - Interface Unifiée Complète"""
     ctx.ensure_object(dict)
     ctx.obj['cli'] = TradingCLI()
+    
+    # Activer/désactiver le trace selon l'option
+    if trace:
+        enable_trace()
+        click.echo("🔍 Mode trace activé", err=True)
+    else:
+        disable_trace()
 
 # ============================================================================
 # COMMANDES SYSTÈME (V3 + améliorations)
@@ -280,6 +326,7 @@ def system():
 @click.option('--mode', type=click.Choice(['basic', 'workflow', 'multi']), 
               default='basic', help='Mode de démarrage')
 @click.pass_context
+@trace_decorator
 def start_system(ctx, mode):
     """Démarrer le système"""
     trading_cli = ctx.obj['cli']
@@ -303,6 +350,7 @@ def start_system(ctx, mode):
 @system.command('status')
 @click.option('--detailed', is_flag=True, help='Affichage détaillé')
 @click.pass_context
+@trace_decorator
 def system_status(ctx, detailed):
     """Statut complet du système"""
     trading_cli = ctx.obj['cli']
@@ -320,7 +368,6 @@ def system_status(ctx, detailed):
     click.echo(f"\n📋 CONFIGURATION:")
     click.echo(f"  Stratégies: {len(trading_cli.strategies_registry)}")
     click.echo(f"  Sessions: {len(trading_cli.sessions_registry)}")
-    click.echo(f"  Profils risque: {len(trading_cli.risk_profiles_registry)}")
     
     if detailed and trading_cli.workflow_running:
         async def _detailed_status():
@@ -338,6 +385,7 @@ def system_status(ctx, detailed):
 @system.command('metrics')
 @click.option('--export', help='Exporter vers fichier JSON')
 @click.pass_context
+@trace_decorator
 def system_metrics(ctx, export):
     """Métriques système détaillées"""
     trading_cli = ctx.obj['cli']
@@ -391,6 +439,7 @@ def session():
 @click.option('--initial-balance', default=0.0, type=float, help='[DEPRECATED] Balance maintenant gérée par stratégie')
 @click.option('--count', default=1, type=int, help='Nombre de sessions à créer')
 @click.pass_context
+@trace_decorator
 def create_session(ctx, name, mode, no_workflow, workflow, initial_balance, count):
     """Créer une ou plusieurs sessions"""
     trading_cli = ctx.obj['cli']
@@ -445,7 +494,7 @@ def create_session(ctx, name, mode, no_workflow, workflow, initial_balance, coun
                 session_mode = SessionMode.SANDBOX if mode == 'sandbox' else SessionMode.PAPER if mode == 'paper' else SessionMode.LIVE
                 
                 await trading_cli.session_manager.create_session(
-                    session_id, strategy_config, session_mode
+                    session_id, session_mode, strategy_config,
                 )
                 
                 created_sessions.append(session_id)
@@ -473,6 +522,7 @@ def create_session(ctx, name, mode, no_workflow, workflow, initial_balance, coun
 @click.option('--format', 'output_format', type=click.Choice(['table', 'json', 'yaml']), 
               default='table', help='Format de sortie')
 @click.pass_context
+@trace_decorator
 def list_sessions(ctx, mode, output_format):
     """Lister les sessions avec filtres"""
     trading_cli = ctx.obj['cli']
@@ -513,6 +563,7 @@ def list_sessions(ctx, mode, output_format):
 @click.option('--force', is_flag=True, help='Forcer le démarrage')
 @click.pass_context
 @smart_resolve_params(session_id='session')
+@trace_decorator
 def start_session(ctx, session_id, force):
     """Démarrer une session (workflow ou standard) - utilise la recherche intelligente"""
     trading_cli = ctx.obj['cli']
@@ -578,6 +629,7 @@ def start_session(ctx, session_id, force):
 @click.option('--live', is_flag=True, help='Mode temps réel')
 @click.pass_context
 @smart_resolve_params(session_id='session')
+@trace_decorator
 def show_session(ctx, session_id, live):
     """Afficher les détails complets d'une session (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
@@ -648,6 +700,7 @@ def show_session(ctx, session_id, live):
 @click.argument('strategy_id')
 @click.pass_context
 @smart_resolve_params(session_id='session', strategy_id='strategy')
+@trace_decorator
 def add_strategy_to_session(ctx, session_id, strategy_id):
     """Ajouter une stratégie à une session (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
@@ -676,6 +729,7 @@ def add_strategy_to_session(ctx, session_id, strategy_id):
 @click.argument('strategy_id')
 @click.pass_context
 @smart_resolve_params(session_id='session', strategy_id='strategy')
+@trace_decorator
 def remove_strategy_from_session(ctx, session_id, strategy_id):
     """Retirer une stratégie d'une session (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
@@ -698,6 +752,7 @@ def remove_strategy_from_session(ctx, session_id, strategy_id):
 @click.option('--detailed', is_flag=True, help='Affichage détaillé des stratégies')
 @click.pass_context
 @smart_resolve_params(session_id='session')
+@trace_decorator
 def list_session_strategies(ctx, session_id, detailed):
     """Lister les stratégies d'une session (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
@@ -747,6 +802,110 @@ def list_session_strategies(ctx, session_id, detailed):
         headers = ['ID', 'Nom', 'Paire', 'Balance', 'Workflow', 'Status']
         click.echo(tabulate(table_data, headers=headers, tablefmt='grid'))
 
+@session.command('kill')
+@click.argument('session_id')
+@click.option('--force', is_flag=True, help='Forcer l\'arrêt sans confirmation')
+@click.pass_context
+@smart_resolve_params(session_id='session')
+@trace_decorator
+def kill_session(ctx, session_id, force):
+    """🔴 Arrêter brutalement une session en cours"""
+    trading_cli = ctx.obj['cli']
+    
+    if session_id not in trading_cli.sessions_registry:
+        click.echo(f"❌ Session '{session_id}' introuvable")
+        return
+    
+    session = trading_cli.sessions_registry[session_id]
+    
+    # Vérification si la session est active
+    if session.get('status') != 'running':
+        click.echo(f"⚠️ Session '{session['name']}' n'est pas en cours d'exécution")
+        click.echo(f"   Status actuel: {session.get('status', 'unknown')}")
+        return
+    
+    # Confirmation si pas de --force
+    if not force:
+        if not click.confirm(f"🔴 Confirmer l'arrêt brutal de la session '{session['name']}' ?"):
+            click.echo("❌ Arrêt annulé")
+            return
+    
+    # Arrêt de la session
+    click.echo(f"🔴 Arrêt brutal de la session '{session['name']}'...")
+    
+    # Mise à jour du status
+    session['status'] = 'killed'
+    session['killed_at'] = datetime.now(timezone.utc).isoformat()
+    
+    # Arrêt des stratégies associées
+    stopped_strategies = 0
+    for strategy_id in session.get('strategies', []):
+        if strategy_id in trading_cli.strategies_registry:
+            strategy = trading_cli.strategies_registry[strategy_id]
+            if strategy.get('status') == 'running':
+                strategy['status'] = 'killed'
+                strategy['killed_at'] = datetime.now(timezone.utc).isoformat()
+                stopped_strategies += 1
+    
+    trading_cli._save_configuration()
+    
+    click.echo(f"✅ Session '{session['name']}' arrêtée brutalement")
+    if stopped_strategies > 0:
+        click.echo(f"🔴 {stopped_strategies} stratégie(s) également arrêtée(s)")
+
+@session.command('remove')
+@click.argument('session_id')
+@click.option('--force', is_flag=True, help='Forcer la suppression sans confirmation')
+@click.option('--keep-strategies', is_flag=True, help='Conserver les stratégies (ne supprimer que la session)')
+@click.pass_context
+@smart_resolve_params(session_id='session')
+@trace_decorator
+def remove_session(ctx, session_id, force, keep_strategies):
+    """🗑️ Supprimer définitivement une session"""
+    trading_cli = ctx.obj['cli']
+    
+    if session_id not in trading_cli.sessions_registry:
+        click.echo(f"❌ Session '{session_id}' introuvable")
+        return
+    
+    session = trading_cli.sessions_registry[session_id]
+    
+    # Vérification si la session est active
+    if session.get('status') == 'running':
+        click.echo(f"❌ Impossible de supprimer la session '{session['name']}' en cours d'exécution")
+        click.echo("   Utilisez 'session kill' d'abord ou arrêtez-la proprement")
+        return
+    
+    # Confirmation si pas de --force
+    if not force:
+        message = f"🗑️ Confirmer la suppression de la session '{session['name']}' ?"
+        if session.get('strategies') and not keep_strategies:
+            message += f"\n   ⚠️ Cela supprimera également {len(session['strategies'])} stratégie(s) associée(s)"
+        
+        if not click.confirm(message):
+            click.echo("❌ Suppression annulée")
+            return
+    
+    # Suppression des stratégies si demandé
+    removed_strategies = 0
+    if not keep_strategies and session.get('strategies'):
+        for strategy_id in session.get('strategies', []):
+            if strategy_id in trading_cli.strategies_registry:
+                del trading_cli.strategies_registry[strategy_id]
+                removed_strategies += 1
+    
+    # Suppression de la session
+    session_name = session['name']
+    del trading_cli.sessions_registry[session_id]
+    
+    trading_cli._save_configuration()
+    
+    click.echo(f"✅ Session '{session_name}' supprimée définitivement")
+    if removed_strategies > 0:
+        click.echo(f"🗑️ {removed_strategies} stratégie(s) également supprimée(s)")
+    elif keep_strategies and session.get('strategies'):
+        click.echo(f"💾 {len(session.get('strategies', []))} stratégie(s) conservée(s)")
+
 # ============================================================================
 # COMMANDES ANALYTICS (V2 + améliorations)
 # ============================================================================
@@ -760,6 +919,7 @@ def analytics():
 @click.option('--export', help='Exporter vers fichier')
 @click.option('--period', default=30, type=int, help='Période en jours')
 @click.pass_context
+@trace_decorator
 def portfolio_report(ctx, export, period):
     """Rapport de portfolio complet"""
     trading_cli = ctx.obj['cli']
@@ -806,6 +966,7 @@ def portfolio_report(ctx, export, period):
 @click.argument('session_queries', nargs=-1, required=True)
 @click.option('--metric', default='performance', help='Métrique de comparaison')
 @click.pass_context
+@trace_decorator
 def compare_sessions(ctx, session_queries, metric):
     """Comparaison avancée entre sessions (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
@@ -870,9 +1031,14 @@ def strategy():
 @click.option('--filter-workflow', is_flag=True, help='Seulement les stratégies workflow')
 @click.option('--filter-active', is_flag=True, help='Seulement les stratégies actives')
 @click.pass_context
+@trace_decorator
 def list_strategies(ctx, filter_workflow, filter_active):
     """Lister les stratégies avec filtres"""
     trading_cli = ctx.obj['cli']
+    
+    # Initialiser le registre s'il n'existe pas
+    if trading_cli.strategies_registry is None:
+        trading_cli.strategies_registry = {}
     
     if not trading_cli.strategies_registry:
         click.echo("Aucune stratégie configurée.")
@@ -914,8 +1080,11 @@ def list_strategies(ctx, filter_workflow, filter_active):
 @click.option('--no-workflow', is_flag=True, help='Désactiver le workflow avancé (activé par défaut)')
 @click.option('--workflow', is_flag=True, help='[DEPRECATED] Utiliser --no-workflow pour désactiver')
 @click.option('--interactive', is_flag=True, help='Configuration interactive complète')
+@click.option('--edit', is_flag=True, help='Lancer l\'édition directement après création')
+@click.option('--no-edit', is_flag=True, help='Ne pas proposer d\'édition (par défaut propose)')
 @click.pass_context
-def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive):
+@trace_decorator
+def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive, edit, no_edit):
     """Créer une stratégie (standard ou workflow)"""
     trading_cli = ctx.obj['cli']
     
@@ -926,6 +1095,10 @@ def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive):
     if workflow:
         workflow_enabled = True
         click.echo("⚠️ Option --workflow deprecated, workflow activé par défaut maintenant")
+    
+    # Initialiser le registre s'il n'existe pas
+    if trading_cli.strategies_registry is None:
+        trading_cli.strategies_registry = {}
     
     # Générer ID si non fourni
     if not strategy_id:
@@ -941,16 +1114,15 @@ def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive):
     strategy_config = {
         'id': strategy_id,
         'name': name,
-        'symbol': None,
-        'timeframe': None,
-        'parameters': {},
+        'symbol': 'BTCUSDC',
+        'timeframe': '15m',
         'indicators': {},
         'signal_rules': {
             'long_condition': None,
             'short_condition': None
         },
         'risk_profile': 'default',
-        'start_date': None,
+        'start_date': '2025-01-01',
         'end_date': 'now',
         'status': 'inactive',
         'workflow_enabled': workflow_enabled,
@@ -966,63 +1138,16 @@ def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive):
         
         timeframe_choices = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d']
         click.echo(f"Timeframes: {', '.join(timeframe_choices)}")
-        timeframe = click.prompt('Timeframe', default='5m')
+        timeframe = click.prompt('Timeframe', default='15m')
         strategy_config['timeframe'] = timeframe
         
         # Configuration de la balance initiale
-        initial_balance = click.prompt('Balance initiale (€)', default=10000.0, type=float)
+        initial_balance = click.prompt('Balance initiale (€)', default=100.0, type=float)
         strategy_config['initial_balance'] = initial_balance
         strategy_config['current_balance'] = initial_balance  # Initialise à la même valeur
-        
-        if workflow_enabled and WORKFLOW_AVAILABLE:
-            click.echo("\n🚀 Configuration workflow avancé:")
-            short_window = click.prompt('Fenêtre courte pour SMA', default=10, type=int)
-            long_window = click.prompt('Fenêtre longue pour SMA', default=30, type=int)
-            
-            strategy_config['parameters'] = {
-                'short_window': short_window,
-                'long_window': long_window
-            }
-            
-            # Ajouter indicateurs automatiques
-            strategy_config['indicators'] = {
-                f'SMA_{short_window}': {
-                    'type': 'SMA',
-                    'parameters': {'period': short_window},
-                    'source': 'close'
-                },
-                f'SMA_{long_window}': {
-                    'type': 'SMA',
-                    'parameters': {'period': long_window},
-                    'source': 'close'
-                },
-                'RSI_14': {
-                    'type': 'RSI',
-                    'parameters': {'period': 14},
-                    'source': 'close'
-                }
-            }
-        
+
         # Configuration Risk Management
-        if click.confirm('Configurer le Risk Management?', default=True):
-            click.echo("\n🛡️ Configuration Risk Management:")
-            
-            max_pos_size = click.prompt('Position size max (0.01-1.0)', default=0.1, type=float)
-            stop_loss = click.prompt('Stop loss (%)', default=2.0, type=float)
-            take_profit = click.prompt('Take profit (%)', default=4.0, type=float)
-            risk_ratio = click.prompt('Risk Ratio (1:RR) - ex: 2.0 = 1:2', default=2.0, type=float)
-            max_daily_loss = click.prompt('Perte journalière max (€)', default=500.0, type=float)
-            max_trades = click.prompt('Trades simultanés max', default=2, type=int)
-            
-            strategy_config['risk_management'] = {
-                'max_position_size': max_pos_size,
-                'stop_loss_percent': stop_loss,
-                'take_profit_percent': take_profit,
-                'risk_ratio': risk_ratio,
-                'max_daily_loss': max_daily_loss,
-                'max_concurrent_trades': max_trades,
-                'position_size_method': 'percent'
-            }
+        # Risk management supprimé - maintenant géré au niveau des stratégies individuelles
     
     trading_cli.strategies_registry[strategy_id] = strategy_config
     trading_cli._save_configuration()
@@ -1032,18 +1157,51 @@ def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive):
         click.echo("🚀 Mode workflow avancé activé")
     else:
         click.echo("⚪ Mode standard (workflow désactivé)")
-    if interactive:
+    
+    # Logique d'édition automatique
+    should_edit = False
+    
+    if edit:
+        # Édition forcée avec --edit
+        should_edit = True
+    elif no_edit:
+        # Pas d'édition avec --no-edit
+        should_edit = False
+    elif interactive:
+        # Si mode interactif déjà utilisé, ne pas redemander
         click.echo("💡 Configuration interactive terminée")
+        should_edit = False
     else:
-        click.echo("💡 Utilisez 'strategy configure' pour configurer les paramètres")
+        # Par défaut, proposer l'édition
+        should_edit = click.confirm("\n📝 Voulez-vous configurer la stratégie maintenant?", default=True)
+    
+    if should_edit:
+        click.echo("\n" + "="*60)
+        click.echo("🎯 CONFIGURATION DE LA STRATÉGIE")
+        click.echo("="*60)
+        
+        # Appeler directement la logique d'édition
+        _edit_strategy_logic(ctx, strategy_id, 'all', trading_cli)
+
+    else:
+        click.echo("💡 Utilisez 'strategy edit' pour configurer les paramètres plus tard")
 
 @strategy.command('show')
 @click.argument('strategy_id')
 @click.pass_context
 @smart_resolve_params(strategy_id='strategy')
+@trace_decorator
 def show_strategy(ctx, strategy_id):
     """Afficher les détails complets d'une stratégie (utilise la recherche intelligente)"""
     trading_cli = ctx.obj['cli']
+    
+    # Initialiser le registre s'il n'existe pas
+    if trading_cli.strategies_registry is None:
+        trading_cli.strategies_registry = {}
+    
+    if strategy_id not in trading_cli.strategies_registry:
+        click.echo(f"❌ Stratégie '{strategy_id}' introuvable!")
+        return
     
     strategy = trading_cli.strategies_registry[strategy_id]
     
@@ -1092,36 +1250,11 @@ def show_strategy(ctx, strategy_id):
     click.echo(f"  LONG: {strategy['signal_rules'].get('long_condition', 'Non défini')}")
     click.echo(f"  SHORT: {strategy['signal_rules'].get('short_condition', 'Non défini')}")
     
-    # Risk Management de la stratégie
-    if strategy.get('risk_management'):
-        risk_mgmt = strategy['risk_management']
-        click.echo(f"\n🛡️ Risk Management:")
-        click.echo(f"  Position size: {risk_mgmt.get('max_position_size', 'N/A')}")
-        click.echo(f"  Stop loss: {risk_mgmt.get('stop_loss_percent', 'N/A')}%")
-        click.echo(f"  Take profit: {risk_mgmt.get('take_profit_percent', 'N/A')}%")
-        click.echo(f"  Risk Ratio (RR): 1:{risk_mgmt.get('risk_ratio', 'N/A')}")
-        click.echo(f"  Max daily loss: {risk_mgmt.get('max_daily_loss', 'N/A')}€")
-        click.echo(f"  Max concurrent trades: {risk_mgmt.get('max_concurrent_trades', 'N/A')}")
+    # Risk Management supprimé - maintenant géré au niveau des stratégies individuelles
     
     click.echo(f"\n🔧 Indicateurs ({len(strategy.get('indicators', {}))}):")
     for ind_name, ind_config in strategy.get('indicators', {}).items():
         click.echo(f"  - {ind_name}: {ind_config.get('type', 'N/A')}({ind_config.get('parameters', {})})")
-    
-    # Si le workflow est activé, simuler la configuration EnhancedStrategyConfig
-    if strategy.get('workflow_enabled') and WORKFLOW_AVAILABLE:
-        try:
-            enhanced = trading_cli.convert_to_enhanced_config(strategy)
-            click.echo(f"\n🚀 Configuration workflow avancé:")
-            click.echo(f"  Indicateurs auto-configurés: {len(enhanced.indicators)}")
-            for ind_name, ind_config in enhanced.indicators.items():
-                click.echo(f"    - {ind_name}: {ind_config.type}({ind_config.parameters})")
-            
-            click.echo(f"  Règles de signaux: {len(enhanced.signal_rules)}")
-            for rule in enhanced.signal_rules:
-                click.echo(f"    - {rule.name}: {rule.condition}")
-        
-        except Exception as e:
-            click.echo(f"⚠️ Erreur lors de la simulation du workflow: {e}")
     
     # Performance de la stratégie
     performance = strategy.get('performance', {})
@@ -1156,6 +1289,567 @@ def show_strategy(ctx, strategy_id):
         elif strategy.get('status') == 'active':
             click.echo(f"  🟢 En cours d'exécution...")
 
+def _show_stratey_logic(ctx, strategy):
+    click.echo(f"📋 Détails de la stratégie :")
+    click.echo(f"  Nom: {strategy['name']}")
+    click.echo(f"  Paire: {strategy.get('symbol', 'Non défini')}")
+    click.echo(f"  Timeframe: {strategy.get('timeframe', 'Non défini')}")
+    click.echo(f"  Date début: {strategy.get('start_date', 'Non défini')}")
+    click.echo(f"  Date fin: {strategy.get('end_date', 'now')}")
+    click.echo(f"  Risk Profile: {strategy.get('risk_profile', 'default')}")
+    click.echo(f"  Status: {strategy.get('status', 'inactive')}")
+    click.echo(f"  Workflow: {'🚀 Activé' if strategy.get('workflow_enabled') else '❌ Désactivé'}")
+
+    # Balance de la stratégie
+    initial_balance = strategy.get('initial_balance', 'N/A')
+    current_balance = strategy.get('current_balance', initial_balance)
+    if isinstance(current_balance, (int, float)) and isinstance(initial_balance, (int, float)):
+        pnl = current_balance - initial_balance
+        pnl_pct = (pnl / initial_balance * 100) if initial_balance > 0 else 0
+        pnl_indicator = "📈" if pnl >= 0 else "📉"
+        click.echo(f"  Balance initiale: {initial_balance}€")
+        click.echo(f"  Balance courante: {current_balance}€")
+        click.echo(f"  P&L: {pnl_indicator} {pnl:+.2f}€ ({pnl_pct:+.2f}%)")
+    else:
+        click.echo(f"  Balance initiale: {initial_balance}€")
+        click.echo(f"  Balance courante: {current_balance}€")
+
+    # Migration info
+    if strategy.get('migrated_from'):
+        click.echo(f"  Migré depuis: {strategy['migrated_from']} le {strategy.get('migration_date', 'N/A')[:10]}")
+
+    # Paramètres V4
+    if strategy.get('v4_features'):
+        click.echo(f"\n🚀 Fonctionnalités V4:")
+        for feature, enabled in strategy['v4_features'].items():
+            status = "✅" if enabled else "❌"
+            click.echo(f"    {feature}: {status}")
+
+    # Paramètres du workflow
+    if strategy.get('parameters'):
+        click.echo(f"\n⚙️ Paramètres:")
+        for param, value in strategy['parameters'].items():
+            click.echo(f"  {param}: {value}")
+
+    click.echo("\n📈 Signaux:")
+    click.echo(f"  LONG: {strategy['signal_rules'].get('long_condition', 'Non défini')}")
+    click.echo(f"  SHORT: {strategy['signal_rules'].get('short_condition', 'Non défini')}")
+
+    # Risk Management supprimé - maintenant géré au niveau des stratégies individuelles
+
+    click.echo(f"\n🔧 Indicateurs ({len(strategy.get('indicators', {}))}):")
+    for ind_name, ind_config in strategy.get('indicators', {}).items():
+        click.echo(f"  - {ind_name}: {ind_config.get('type', 'N/A')}({ind_config.get('parameters', {})})")
+
+def _edit_strategy_logic(ctx, strategy_id, section, trading_cli):
+    """Logique d'édition de stratégie réutilisable"""
+    
+    # Initialiser le registre s'il n'existe pas
+    if trading_cli.strategies_registry is None:
+        trading_cli.strategies_registry = {}
+    
+    if strategy_id not in trading_cli.strategies_registry:
+        click.echo(f"❌ Stratégie '{strategy_id}' introuvable!")
+        return False
+    
+    strategy = trading_cli.strategies_registry[strategy_id]
+    original_strategy = strategy.copy()
+    
+    click.echo(f"✏️  MODIFICATION DE LA STRATÉGIE '{strategy_id}'")
+    click.echo("=" * 60)
+    click.echo("💡 Appuyez sur Entrée pour garder la valeur actuelle")
+    click.echo("💡 Tapez 'skip' pour passer une section entière")
+    click.echo()
+
+    # Section: Paramètres de base
+    if section in ['basic', 'all']:
+        click.echo("📋 PARAMÈTRES DE BASE")
+        click.echo("-" * 30)
+
+        # Nom
+        new_name = click.prompt(f"Nom [{strategy.get('name', 'Non défini')}]",
+                                default=strategy.get('name', ''), show_default=False)
+        if new_name and new_name != 'skip':
+            strategy['name'] = new_name
+
+        # Symbole
+        new_symbol = click.prompt(f"Symbole/Paire [{strategy.get('symbol', 'Non défini')}]",
+                                  default=strategy.get('symbol', ''), show_default=False)
+        if new_symbol and new_symbol != 'skip':
+            strategy['symbol'] = new_symbol
+
+        # Timeframe
+        new_timeframe = click.prompt(f"Timeframe [{strategy.get('timeframe', 'Non défini')}]",
+                                     default=strategy.get('timeframe', ''), show_default=False)
+        if new_timeframe and new_timeframe != 'skip':
+            strategy['timeframe'] = new_timeframe
+
+        # Start date
+        new_start_date = click.prompt(f"Start date [{strategy.get('start_date', 'Non défini')}]",
+                                      default=strategy.get('start_date', '2025-01-01'), show_default=False)
+        if new_start_date and new_start_date != 'skip':
+            strategy['start_date'] = new_start_date
+
+        # End date
+        new_end_date = click.prompt(f"End date [{strategy.get('end_date', 'Non défini')}]",
+                                    default=strategy.get('end_date', 'now'), show_default=False)
+        if new_end_date and new_end_date != 'skip':
+            strategy['end_date'] = new_end_date
+
+        # Balance initiale
+        try:
+            current_balance = strategy.get('initial_balance', 100.0)
+            new_balance = click.prompt(f"Balance initiale [{current_balance}]",
+                                       default=str(current_balance), show_default=False)
+            if new_balance and new_balance != 'skip':
+                strategy['initial_balance'] = float(new_balance)
+        except ValueError:
+            click.echo("⚠️ Balance invalide, valeur conservée")
+
+        click.echo()
+
+    # Section: Paramètres de stratégie
+    if section in ['parameters', 'all']:
+        click.echo("⚙️  PARAMÈTRES DE STRATÉGIE")
+        click.echo("-" * 30)
+
+        if not strategy.get('parameters'):
+            strategy['parameters'] = {}
+
+        # Afficher les paramètres existants et permettre modification
+        for param_name, current_value in strategy.get('parameters', {}).items():
+            new_value = click.prompt(f"{param_name} [{current_value}]",
+                                     default=str(current_value), show_default=False)
+            if new_value and new_value != 'skip':
+                # Essayer de convertir au bon type
+                try:
+                    if isinstance(current_value, bool):
+                        strategy['parameters'][param_name] = new_value.lower() in ['true', '1', 'yes', 'on']
+                    elif isinstance(current_value, int):
+                        strategy['parameters'][param_name] = int(new_value)
+                    elif isinstance(current_value, float):
+                        strategy['parameters'][param_name] = float(new_value)
+                    else:
+                        strategy['parameters'][param_name] = new_value
+                except ValueError:
+                    click.echo(f"⚠️ Valeur invalide pour {param_name}, conservée")
+
+        # Proposer d'ajouter de nouveaux paramètres
+        if click.confirm("Ajouter un nouveau paramètre?"):
+            while True:
+                param_name = click.prompt("Nom du paramètre (ou 'done' pour terminer)")
+                if param_name.lower() == 'done':
+                    break
+
+                param_value = click.prompt(f"Valeur pour {param_name}")
+                param_type = click.prompt("Type (str/int/float/bool)", default="str")
+
+                try:
+                    if param_type == 'int':
+                        strategy['parameters'][param_name] = int(param_value)
+                    elif param_type == 'float':
+                        strategy['parameters'][param_name] = float(param_value)
+                    elif param_type == 'bool':
+                        strategy['parameters'][param_name] = param_value.lower() in ['true', '1', 'yes', 'on']
+                    else:
+                        strategy['parameters'][param_name] = param_value
+                    click.echo(f"✅ Paramètre {param_name} ajouté")
+                except ValueError:
+                    click.echo(f"⚠️ Valeur invalide pour {param_name}")
+
+        click.echo()
+
+    # Section: Indicateurs
+    if section in ['indicators', 'all']:
+        click.echo("📈 INDICATEURS TECHNIQUES")
+        click.echo("-" * 30)
+
+        if not strategy.get('indicators'):
+            strategy['indicators'] = {}
+
+        # Modifier les indicateurs existants
+        for ind_name, ind_config in strategy.get('indicators', {}).items():
+            click.echo(f"\n🔹 Indicateur: {ind_name}")
+
+            # Type d'indicateur
+            current_type = ind_config.get('type', 'SMA')
+            new_type = click.prompt(f"  Type [{current_type}]", default=current_type, show_default=False)
+            if new_type and new_type != 'skip':
+                ind_config['type'] = new_type
+
+            # Paramètres de l'indicateur
+            if not ind_config.get('parameters'):
+                ind_config['parameters'] = {}
+
+            for param_name, param_value in ind_config.get('parameters', {}).items():
+                if param_name == 'name' and param_value is None:
+                    param_value = ind_name
+                new_param = click.prompt(f"  {param_name} [{param_value}]",
+                                         default=str(param_value), show_default=False)
+                if new_param and new_param != 'skip':
+                    try:
+                        if isinstance(param_value, int):
+                            strategy['indicators'][ind_name]['parameters'][param_name] = int(new_param)
+
+                        elif isinstance(param_value, float):
+                            strategy['indicators'][ind_name]['parameters'][param_name] = float(new_param)
+                        else:
+                            strategy['indicators'][ind_name]['parameters'][param_name] = new_param
+                    except ValueError:
+                        click.echo(f"⚠️ Valeur invalide pour {param_name}")
+
+        # Proposer d'ajouter de nouveaux indicateurs
+        if click.confirm("Ajouter un nouvel indicateur?"):
+            # Importer le service d'indicateurs pour les suggestions
+            try:
+                from services.indicators_service import IndicatorsService
+                indicators_service = IndicatorsService()
+
+                # Récupérer la liste des indicateurs disponibles (synchrone en utilisant le registre directement)
+                from services.indicators_service import IndicatorRegistry
+                available_indicators = IndicatorRegistry.list_indicators()
+                available_types = list(available_indicators.keys()) if available_indicators else ['SMA', 'EMA', 'RSI',
+                                                                                                  'MACD', 'BB', 'ATR',
+                                                                                                  'STOCH']
+
+                click.echo(f"\n📈 Indicateurs disponibles: {', '.join(available_types)}")
+
+            except Exception as e:
+                click.echo(f"⚠️ Impossible de charger les indicateurs: {e}")
+                available_types = ['SMA', 'EMA', 'RSI', 'MACD', 'BB', 'ATR', 'STOCH']
+                indicators_service = None
+
+            while True:
+                ind_name = click.prompt("Nom de l'indicateur (ou 'done' pour terminer)")
+                if ind_name.lower() == 'done':
+                    break
+
+                # Proposer les types disponibles avec validation
+                ind_type = click.prompt(f"Type d'indicateur {available_types}", default="SMA")
+
+                # Vérifier si le type est valide
+                if ind_type not in available_types:
+                    click.echo(f"⚠️ Type '{ind_type}' non reconnu. Utilisation de 'SMA' par défaut")
+                    ind_type = "SMA"
+
+                strategy['indicators'][ind_name] = {
+                    'type': ind_type,
+                    'parameters': {},
+                    'source': 'close'
+                }
+
+                # Utiliser les paramètres par défaut de l'indicateur si disponible
+                if indicators_service:
+                    try:
+                        # Utiliser le registre directement (méthodes synchrones)
+                        default_params = IndicatorRegistry.get_params(ind_type)
+                        param_types = IndicatorRegistry.get_param_types(ind_type)
+
+                        if default_params:
+                            click.echo(f"\n🔧 Configuration automatique des paramètres pour {ind_type}:")
+                            click.echo(f"Paramètres par défaut: {default_params}")
+
+                            if click.confirm("Utiliser les paramètres par défaut?"):
+                                strategy['indicators'][ind_name]['parameters'] = default_params.copy()
+                                click.echo("✅ Paramètres par défaut appliqués")
+                            else:
+                                # Configuration manuelle avec suggestions
+                                click.echo("Configuration manuelle des paramètres:")
+                                for param_name, default_value in default_params.items():
+                                    param_type_hint = param_types.get(param_name, type(
+                                        default_value)).__name__ if param_types else 'auto'
+
+                                    if param_name == 'name' and default_value is None:
+                                        default_value = ind_name
+
+                                    new_value = click.prompt(
+                                        f"  {param_name} ({param_type_hint}) [{default_value}]",
+                                        default=str(default_value),
+                                        show_default=False
+                                    )
+
+                                    if new_value and new_value != str(default_value):
+                                        # Convertir au bon type
+                                        try:
+                                            if param_types and param_types.get(param_name) == int:
+                                                strategy['indicators'][ind_name]['parameters'][param_name] = int(
+                                                    new_value)
+                                            elif param_types and param_types.get(param_name) == float:
+                                                strategy['indicators'][ind_name]['parameters'][param_name] = float(
+                                                    new_value)
+                                            elif param_types and param_types.get(param_name) == bool:
+                                                strategy['indicators'][ind_name]['parameters'][
+                                                    param_name] = new_value.lower() in ['true', '1', 'yes', 'on']
+                                            elif isinstance(default_value, int):
+                                                strategy['indicators'][ind_name]['parameters'][param_name] = int(
+                                                    new_value)
+                                            elif isinstance(default_value, float):
+                                                strategy['indicators'][ind_name]['parameters'][param_name] = float(
+                                                    new_value)
+                                            elif isinstance(default_value, bool):
+                                                strategy['indicators'][ind_name]['parameters'][
+                                                    param_name] = new_value.lower() in ['true', '1', 'yes', 'on']
+                                            else:
+                                                strategy['indicators'][ind_name]['parameters'][param_name] = new_value
+                                        except ValueError:
+                                            click.echo(
+                                                f"⚠️ Valeur invalide pour {param_name}, utilisation de la valeur par défaut")
+                                            strategy['indicators'][ind_name]['parameters'][param_name] = default_value
+                                    else:
+                                        strategy['indicators'][ind_name]['parameters'][param_name] = default_value
+                        else:
+                            click.echo(f"⚠️ Aucun paramètre par défaut trouvé pour {ind_type}")
+                            # Fallback vers la méthode manuelle
+                            if click.confirm(f"Ajouter des paramètres pour {ind_name} manuellement?"):
+                                while True:
+                                    param_name = click.prompt("Nom du paramètre (ou 'done' pour terminer)")
+                                    if param_name.lower() == 'done':
+                                        break
+                                    param_value = click.prompt(f"Valeur pour {param_name}")
+
+                                    # Essayer de deviner le type
+                                    try:
+                                        if '.' in param_value:
+                                            strategy['indicators'][ind_name]['parameters'][param_name] = float(
+                                                param_value)
+                                        else:
+                                            strategy['indicators'][ind_name]['parameters'][param_name] = int(
+                                                param_value)
+                                    except ValueError:
+                                        strategy['indicators'][ind_name]['parameters'][param_name] = param_value
+
+                        # Proposer d'ajouter des paramètres supplémentaires
+                        if click.confirm("Ajouter des paramètres supplémentaires?"):
+                            while True:
+                                extra_param = click.prompt("Nom du paramètre supplémentaire (ou 'done' pour terminer)")
+                                if extra_param.lower() == 'done':
+                                    break
+
+                                extra_value = click.prompt(f"Valeur pour {extra_param}")
+                                extra_type = click.prompt("Type (str/int/float/bool)", default="str")
+
+                                try:
+                                    if extra_type == 'int':
+                                        strategy['indicators'][ind_name]['parameters'][extra_param] = int(extra_value)
+                                    elif extra_type == 'float':
+                                        strategy['indicators'][ind_name]['parameters'][extra_param] = float(extra_value)
+                                    elif extra_type == 'bool':
+                                        strategy['indicators'][ind_name]['parameters'][
+                                            extra_param] = extra_value.lower() in ['true', '1', 'yes', 'on']
+                                    else:
+                                        strategy['indicators'][ind_name]['parameters'][extra_param] = extra_value
+                                    click.echo(f"✅ Paramètre {extra_param} ajouté")
+                                except ValueError:
+                                    click.echo(f"⚠️ Valeur invalide pour {extra_param}")
+
+                    except Exception as e:
+                        click.echo(f"⚠️ Impossible de récupérer les paramètres par défaut: {e}")
+                        # Fallback vers la méthode manuelle
+                        if click.confirm(f"Ajouter des paramètres pour {ind_name} manuellement?"):
+                            while True:
+                                param_name = click.prompt("Nom du paramètre (ou 'done' pour terminer)")
+                                if param_name.lower() == 'done':
+                                    break
+                                param_value = click.prompt(f"Valeur pour {param_name}")
+
+                                # Essayer de deviner le type
+                                try:
+                                    if '.' in param_value:
+                                        strategy['indicators'][ind_name]['parameters'][param_name] = float(param_value)
+                                    else:
+                                        strategy['indicators'][ind_name]['parameters'][param_name] = int(param_value)
+                                except ValueError:
+                                    strategy['indicators'][ind_name]['parameters'][param_name] = param_value
+                else:
+                    # Fallback si le service n'est pas disponible
+                    if click.confirm(f"Ajouter des paramètres pour {ind_name}?"):
+                        while True:
+                            param_name = click.prompt("Nom du paramètre (ou 'done' pour terminer)")
+                            if param_name.lower() == 'done':
+                                break
+                            param_value = click.prompt(f"Valeur pour {param_name}")
+
+                            # Essayer de deviner le type
+                            try:
+                                if '.' in param_value:
+                                    strategy['indicators'][ind_name]['parameters'][param_name] = float(param_value)
+                                else:
+                                    strategy['indicators'][ind_name]['parameters'][param_name] = int(param_value)
+                            except ValueError:
+                                strategy['indicators'][ind_name]['parameters'][param_name] = param_value
+
+                click.echo(f"✅ Indicateur {ind_name} ({ind_type}) ajouté")
+
+        click.echo()
+
+    # Section: Règles de signaux
+    if section in ['signals', 'all']:
+        click.echo("🎯 RÈGLES DE SIGNAUX")
+        click.echo("-" * 30)
+
+        if not strategy.get('signal_rules'):
+            strategy['signal_rules'] = {}
+
+        # Condition LONG
+        current_long = strategy.get('signal_rules', {}).get('long_condition', '')
+        new_long = click.prompt(f"Condition LONG\n[{current_long}]\n➤ ",
+                                default=current_long, show_default=False)
+        if new_long and new_long != 'skip':
+            strategy['signal_rules']['long_condition'] = new_long
+
+        # Condition SHORT
+        current_short = strategy.get('signal_rules', {}).get('short_condition', '')
+        new_short = click.prompt(f"Condition SHORT\n[{current_short}]\n➤ ",
+                                 default=current_short, show_default=False)
+        if new_short and new_short != 'skip':
+            strategy['signal_rules']['short_condition'] = new_short
+
+        click.echo()
+
+    # Résumé des changements
+    click.echo("📝 RÉSUMÉ DES MODIFICATIONS")
+    click.echo("=" * 40)
+
+    #changes_made = False
+    #if strategy != original_strategy:
+    #    changes_made = True
+    click.echo("Stratégie modifiées:")
+    _show_stratey_logic(ctx, strategy)
+
+    # Confirmation et sauvegarde
+    if click.confirm("\nSauvegarder les modifications?"):
+        trading_cli.strategies_registry[strategy_id] = strategy
+        trading_cli._save_configuration()
+        click.echo("✅ Stratégie mise à jour avec succès!")
+
+        # Si le workflow est activé, proposer de redémarrer
+        if strategy.get('workflow_enabled') and strategy.get('status') == 'active':
+            if click.confirm("La stratégie est active. Redémarrer pour appliquer les changements?"):
+                # Logic pour redémarrer la stratégie
+                click.echo("🔄 Redémarrage de la stratégie...")
+    else:
+        click.echo("❌ Modifications annulées")
+
+    # Sauvegarder les modifications
+    trading_cli.strategies_registry[strategy_id] = strategy
+    trading_cli._save_configuration()
+
+    click.echo()
+    click.echo("✅ Configuration rapide terminée!")
+    click.echo(f"💡 Pour une configuration avancée, utilisez: strategy edit {strategy_id}")
+
+    return True
+
+@strategy.command('edit')
+@click.argument('strategy_id')
+@click.option('--section', type=click.Choice(['basic', 'parameters', 'indicators', 'signals', 'all']), 
+              default='all', help='Section à modifier')
+@click.pass_context
+@smart_resolve_params(strategy_id='strategy')
+@trace_decorator
+def edit_strategy(ctx, strategy_id, section):
+    """Modifier une stratégie de manière interactive"""
+    trading_cli = ctx.obj['cli']
+    return _edit_strategy_logic(ctx, strategy_id, section, trading_cli)
+
+@strategy.command('del')
+@click.argument('strategy_id')
+@click.option('--force', is_flag=True, help='Supprimer sans confirmation')
+@click.option('--remove-from-sessions', is_flag=True, 
+              help='Retirer aussi la stratégie de toutes les sessions')
+@click.pass_context
+@smart_resolve_params(strategy_id='strategy')
+@trace_decorator
+def delete_strategy(ctx, strategy_id, force, remove_from_sessions):
+    """Supprimer une stratégie"""
+    trading_cli = ctx.obj['cli']
+    
+    # Initialiser le registre s'il n'existe pas
+    if trading_cli.strategies_registry is None:
+        trading_cli.strategies_registry = {}
+    
+    if strategy_id not in trading_cli.strategies_registry:
+        click.echo(f"❌ Stratégie '{strategy_id}' introuvable!")
+        return
+    
+    strategy = trading_cli.strategies_registry[strategy_id]
+    
+    # Vérifier si la stratégie est active
+    if strategy.get('status') == 'active' or strategy.get('status') == 'running':
+        click.echo(f"⚠️ La stratégie '{strategy['name']}' est actuellement active!")
+        if not click.confirm("Voulez-vous vraiment la supprimer?"):
+            click.echo("❌ Suppression annulée")
+            return
+    
+    # Vérifier si la stratégie est utilisée dans des sessions
+    sessions_using_strategy = []
+    for session_id, session in trading_cli.sessions_registry.items():
+        if strategy_id in session.get('strategies', []):
+            sessions_using_strategy.append((session_id, session['name']))
+    
+    if sessions_using_strategy:
+        click.echo(f"⚠️ La stratégie '{strategy['name']}' est utilisée dans {len(sessions_using_strategy)} session(s):")
+        for session_id, session_name in sessions_using_strategy:
+            click.echo(f"  • {session_id} ({session_name})")
+        
+        if remove_from_sessions:
+            click.echo("🔧 La stratégie sera retirée de toutes ces sessions")
+        else:
+            click.echo("💡 Utilisez --remove-from-sessions pour la retirer automatiquement des sessions")
+            if not click.confirm("Continuer la suppression sans retirer des sessions?"):
+                click.echo("❌ Suppression annulée")
+                return
+    
+    # Afficher les détails de la stratégie à supprimer
+    click.echo(f"\n🗑️  SUPPRESSION DE LA STRATÉGIE")
+    click.echo("=" * 50)
+    click.echo(f"ID: {strategy_id}")
+    click.echo(f"Nom: {strategy['name']}")
+    click.echo(f"Type: {'🚀 Workflow' if strategy.get('workflow_enabled') else '⚪ Standard'}")
+    click.echo(f"Status: {strategy.get('status', 'unknown')}")
+    
+    if strategy.get('performance'):
+        perf = strategy['performance']
+        click.echo(f"Performance: {perf.get('total_trades', 0)} trades, {perf.get('win_rate', 0):.1%} win rate")
+    
+    # Confirmation
+    if not force:
+        if not click.confirm(f"\n❗ Confirmer la suppression définitive de '{strategy['name']}'?"):
+            click.echo("❌ Suppression annulée")
+            return
+    
+    # Supprimer de toutes les sessions si demandé
+    removed_from_sessions = 0
+    if remove_from_sessions:
+        for session_id, session_name in sessions_using_strategy:
+            session = trading_cli.sessions_registry[session_id]
+            if strategy_id in session.get('strategies', []):
+                session['strategies'].remove(strategy_id)
+                removed_from_sessions += 1
+                click.echo(f"  ✅ Retirée de la session '{session_name}'")
+    
+    # Arrêter la stratégie si elle est active
+    if strategy.get('status') in ['active', 'running']:
+        strategy['status'] = 'stopped'
+        click.echo("🛑 Stratégie arrêtée")
+    
+    # Supprimer la stratégie du registre
+    del trading_cli.strategies_registry[strategy_id]
+    
+    # Sauvegarder la configuration
+    trading_cli._save_configuration()
+    
+    # Résumé
+    click.echo(f"\n✅ Stratégie '{strategy['name']}' supprimée avec succès!")
+    if removed_from_sessions > 0:
+        click.echo(f"📤 Retirée de {removed_from_sessions} session(s)")
+    
+    # Avertissement si encore dans des sessions
+    remaining_sessions = len(sessions_using_strategy) - removed_from_sessions
+    if remaining_sessions > 0:
+        click.echo(f"⚠️ La stratégie reste référencée dans {remaining_sessions} session(s)")
+        click.echo("💡 Utilisez 'session show <session_id>' pour vérifier")
+
 # ============================================================================
 # COMMANDES PERFORMANCE TRACKING
 # ============================================================================
@@ -1171,6 +1865,7 @@ def performance():
 @click.option('--metric', type=click.Choice(['pnl', 'win_rate', 'profit_factor']), 
               default='pnl', help='Métrique de tri')
 @click.pass_context
+@trace_decorator
 def best_strategies(ctx, session_id, limit, metric):
     """Afficher les meilleures stratégies par session ou globalement"""
     trading_cli = ctx.obj['cli']
@@ -1255,6 +1950,7 @@ def best_strategies(ctx, session_id, limit, metric):
 @click.option('--metric', type=click.Choice(['total_pnl', 'avg_strategy_pnl', 'best_strategy_pnl']), 
               default='total_pnl', help='Métrique de tri')
 @click.pass_context
+@trace_decorator
 def profitable_sessions(ctx, limit, metric):
     """Lister les sessions les plus profitables"""
     trading_cli = ctx.obj['cli']
@@ -1434,6 +2130,7 @@ def test():
 @click.option('--duration', default=30, type=int, help='Durée du test en secondes')
 @click.option('--strategies', default=1, type=int, help='Nombre de stratégies de test')
 @click.pass_context
+@trace_decorator
 def test_workflow(ctx, duration, strategies):
     """Test complet du workflow avec métriques"""
     trading_cli = ctx.obj['cli']
@@ -1539,6 +2236,7 @@ def test_workflow(ctx, duration, strategies):
 @click.option('--count', default=3, type=int, help='Nombre de sessions')
 @click.option('--duration', default=20, type=int, help='Durée en secondes')
 @click.pass_context
+@trace_decorator
 def test_multi_session(ctx, count, duration):
     """Test multi-session avec performance"""
     trading_cli = ctx.obj['cli']
@@ -1585,6 +2283,88 @@ def test_multi_session(ctx, count, duration):
     asyncio.run(_test_multi())
 
 # ============================================================================
+# GESTION DES INDICATEURS TECHNIQUES
+# ============================================================================
+
+@cli.group()
+def indicators():
+    """📈 Gestion des indicateurs techniques"""
+    pass
+
+@indicators.command('list')
+@click.option('--category', help='Filtrer par catégorie (moving_averages, oscillators, momentum, volatility)')
+@click.option('--format', 'output_format', type=click.Choice(['table', 'json']), 
+              default='table', help='Format de sortie')
+@click.pass_context
+@trace_decorator
+def indicators_list(ctx, category, output_format):
+    """Lister tous les indicateurs techniques disponibles"""
+    
+    async def _list_indicators():
+        try:
+            # Importer le service d'indicateurs
+            from services.indicators_service import IndicatorsService
+            
+            indicators_service = IndicatorsService()
+            indicators_df = await indicators_service.list_available_indicators()
+            
+            if indicators_df.empty:
+                click.echo("❌ Aucun indicateur disponible")
+                return
+            
+            # Filtrer par catégorie si spécifié
+            if category:
+                indicators_df = indicators_df[indicators_df['Category'] == category]
+                if indicators_df.empty:
+                    click.echo(f"❌ Aucun indicateur trouvé pour la catégorie '{category}'")
+                    return
+            
+            if output_format == 'json':
+                click.echo(indicators_df.to_json(orient='records', indent=2))
+            else:
+                click.echo("\n📈 INDICATEURS TECHNIQUES DISPONIBLES")
+                click.echo("=" * 80)
+                
+                if category:
+                    click.echo(f"Catégorie: {category}")
+                    click.echo("-" * 40)
+                
+                # Grouper par catégorie pour un affichage plus clair
+                if not category:
+                    for cat in indicators_df['Category'].unique():
+                        cat_indicators = indicators_df[indicators_df['Category'] == cat]
+                        click.echo(f"\n🏷️  {cat.upper()}")
+                        click.echo("-" * 40)
+                        
+                        for _, indicator in cat_indicators.iterrows():
+                            click.echo(f"  📊 {indicator['Name']}")
+                            click.echo(f"     Description: {indicator['Description']}")
+                            click.echo(f"     Paramètres: {indicator['Default_Params']}")
+                            click.echo(f"     Colonnes requises: {indicator['Required_Columns']}")
+                            click.echo(f"     Colonnes de sortie: {indicator['Output_Columns']}")
+                            click.echo()
+                else:
+                    for _, indicator in indicators_df.iterrows():
+                        click.echo(f"📊 {indicator['Name']}")
+                        click.echo(f"   Description: {indicator['Description']}")
+                        click.echo(f"   Paramètres: {indicator['Default_Params']}")
+                        click.echo(f"   Colonnes requises: {indicator['Required_Columns']}")
+                        click.echo(f"   Colonnes de sortie: {indicator['Output_Columns']}")
+                        click.echo()
+                
+                click.echo(f"\n📊 Total: {len(indicators_df)} indicateur(s)")
+                
+                if not category:
+                    categories = indicators_df['Category'].unique()
+                    click.echo(f"🏷️  Catégories disponibles: {', '.join(categories)}")
+                    click.echo("\n💡 Utilisez --category <nom> pour filtrer par catégorie")
+                
+        except Exception as e:
+            click.echo(f"❌ Erreur lors de la récupération des indicateurs: {e}")
+    
+    asyncio.run(_list_indicators())
+
+# ============================================================================
 # COMMANDES UTILITAIRES
 # ============================================================================
 
@@ -1592,6 +2372,7 @@ def test_multi_session(ctx, count, duration):
 @click.option('--type', 'entity_type', type=click.Choice(['sessions', 'strategies', 'all']), 
               default='all', help='Type d\'entités à lister')
 @click.pass_context
+@trace_decorator
 def list_entities(ctx, entity_type):
     """Lister toutes les entités disponibles pour les filtres intelligents"""
     trading_cli = ctx.obj['cli']
@@ -1620,6 +2401,7 @@ def list_entities(ctx, entity_type):
         click.echo("  - Recherche floue automatique avec suggestions")
 
 @cli.command('version')
+@trace_decorator
 def version():
     """Afficher la version et les capacités"""
     click.echo("🚀 TradingCLI V4 - Interface Unifiée Complète")
@@ -1644,6 +2426,7 @@ def version():
 @cli.command('init')
 @click.option('--force', is_flag=True, help='Forcer la réinitialisation')
 @click.pass_context
+@trace_decorator
 def init_system(ctx, force):
     """Initialiser le système complet"""
     trading_cli = ctx.obj['cli']
@@ -1661,7 +2444,9 @@ def init_system(ctx, force):
                 'name': 'Demo Unified Strategy',
                 'symbol': 'BTCUSD',
                 'timeframe': '5m',
-                'parameters': {'short_window': 10, 'long_window': 30},
+                'start_date': '2025-01-01',
+                'end_date': 'now',
+                'parameters': {},
                 'indicators': {
                     'SMA_10': {'type': 'SMA', 'parameters': {'period': 10}, 'source': 'close'},
                     'SMA_30': {'type': 'SMA', 'parameters': {'period': 30}, 'source': 'close'},
@@ -1670,6 +2455,15 @@ def init_system(ctx, force):
                 'signal_rules': {
                     'long_condition': 'SMA_10 > SMA_30 & SMA_10[-1] <= SMA_30[-1] & RSI_14 < 70',
                     'short_condition': 'SMA_10 < SMA_30 & SMA_10[-1] >= SMA_30[-1] & RSI_14 > 30'
+                },
+                'risk_profiles': {
+                    'default': {
+                        'name': 'Profil par défaut',
+                        'position_size_value': 2.0,
+                        'max_concurrent_trades': 3,
+                        'stop_loss_percent': 2.0,
+                        'take_profit_percent': 4.0
+                    }
                 },
                 'workflow_enabled': True,
                 'status': 'configured',
@@ -1680,21 +2474,11 @@ def init_system(ctx, force):
             'demo_unified_session': {
                 'id': 'demo_unified_session',
                 'name': 'Demo Unified Session',
-                'mode': 'sandbox',
+                'mode': 'paper',
                 'workflow_enabled': True,
                 'strategies': ['demo_unified'],
-                'initial_balance': 10000.0,
                 'status': 'configured',
                 'created_at': datetime.now(timezone.utc).isoformat()
-            }
-        },
-        'risk_profiles': {
-            'default': {
-                'name': 'Profil par défaut',
-                'position_size_value': 2.0,
-                'max_concurrent_trades': 3,
-                'stop_loss_percent': 2.0,
-                'take_profit_percent': 4.0
             }
         }
     }

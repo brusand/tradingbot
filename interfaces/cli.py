@@ -73,8 +73,7 @@ def create_session(ctx, name, mode, strategy, pairs, timeframe, max_position, st
         session = await cli_instance.session_manager.create_session(
             name=name,
             mode=SessionMode(mode),
-            strategy=strategy_config,
-            risk_params=risk_config
+            strategy=strategy_config
         )
         
         click.echo(f"Created session: {session.id}")

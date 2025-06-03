@@ -59,7 +59,6 @@ class Session:
     name: str
     mode: SessionMode
     strategy: StrategyConfig
-    risk_params: RiskConfig
     created_at: datetime
     updated_at: datetime
     status: SessionStatus
@@ -67,14 +66,13 @@ class Session:
     performance_metrics: PerformanceMetrics
     
     @classmethod
-    def create(cls, name: str, mode: SessionMode, strategy: StrategyConfig, risk_params: RiskConfig):
+    def create(cls, name: str, mode: SessionMode, strategy: StrategyConfig):
         now = datetime.now(UTC)
         return cls(
             id=str(uuid.uuid4()),
             name=name,
             mode=mode,
             strategy=strategy,
-            risk_params=risk_params,
             created_at=now,
             updated_at=now,
             status=SessionStatus.CREATED,

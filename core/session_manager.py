@@ -1,7 +1,7 @@
 import asyncio
 from typing import List, Optional, Dict
 from datetime import datetime, UTC
-from data.models import Session, SessionMode, SessionStatus, StrategyConfig, RiskConfig
+from data.models import Session, SessionMode, SessionStatus, StrategyConfig
 from data.persistence import DatabaseManager
 
 
@@ -15,12 +15,12 @@ class SessionManager:
         
     async def create_session(
         self, 
-        name: str, 
-        mode: SessionMode, 
-        strategy: StrategyConfig, 
-        risk_params: RiskConfig
+        name: str,
+        strategy: StrategyConfig,
+        mode: SessionMode,
+
     ) -> Session:
-        session = Session.create(name, mode, strategy, risk_params)
+        session = Session.create(name, strategy, mode )
         await self.db_manager.save_session(session)
         return session
     
@@ -81,8 +81,7 @@ class SessionManager:
         new_session = Session.create(
             name=new_name,
             mode=original.mode,
-            strategy=original.strategy,
-            risk_params=original.risk_params
+            strategy=original.strategy
         )
         
         await self.db_manager.save_session(new_session)

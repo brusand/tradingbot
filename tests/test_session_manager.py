@@ -65,8 +65,7 @@ class TestSessionManager:
         session = await session_manager.create_session(
             name="Test Session",
             mode=SessionMode.PAPER,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         assert session is not None
@@ -82,8 +81,7 @@ class TestSessionManager:
         session = await session_manager.create_session(
             name="Test Session",
             mode=SessionMode.PAPER,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         success = await session_manager.start_session(session.id)
@@ -98,8 +96,7 @@ class TestSessionManager:
         session = await session_manager.create_session(
             name="Test Session",
             mode=SessionMode.PAPER,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         await session_manager.start_session(session.id)
@@ -115,8 +112,7 @@ class TestSessionManager:
         session = await session_manager.create_session(
             name="Test Session",
             mode=SessionMode.PAPER,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         await session_manager.start_session(session.id)
@@ -133,15 +129,13 @@ class TestSessionManager:
         session1 = await session_manager.create_session(
             name="Session 1",
             mode=SessionMode.PAPER,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         session2 = await session_manager.create_session(
             name="Session 2",
             mode=SessionMode.SANDBOX,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         sessions = await session_manager.list_sessions()
@@ -157,8 +151,7 @@ class TestSessionManager:
         original = await session_manager.create_session(
             name="Original Session",
             mode=SessionMode.PAPER,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         duplicate = await session_manager.duplicate_session(original.id, "Duplicate Session")
@@ -176,8 +169,7 @@ class TestSessionManager:
         session = await session_manager.create_session(
             name="Test Session",
             mode=SessionMode.PAPER,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         success = await session_manager.delete_session(session.id)
@@ -192,8 +184,7 @@ class TestSessionManager:
         session = await session_manager.create_session(
             name="Test Session",
             mode=SessionMode.PAPER,
-            strategy=sample_strategy_config,
-            risk_params=sample_risk_config
+            strategy=sample_strategy_config
         )
         
         state_update = {"test_key": "test_value", "counter": 42}
