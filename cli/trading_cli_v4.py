@@ -15,6 +15,7 @@ import os
 import sys
 import time
 
+
 # Tabulate avec fallback
 try:
     from tabulate import tabulate
@@ -58,9 +59,10 @@ try:
     from core.strategy_workflow import TradingStrategy, IndicatorConfig, SignalRule
     #from core.indicators_service import IndicatorsService
     from services.indicators_service import IndicatorsService
-    from services.candles_service import CandlesService
     from core.strategy_manager_enhanced import StrategyManagerEnhanced, EnhancedStrategyConfig
     from core.pubsub_engine import PubSubEngine
+    from services.kraken_market_service import get_kraken_market_service
+
     from core.channels import CHANNELS
     WORKFLOW_AVAILABLE = True
 except ImportError:
@@ -183,6 +185,8 @@ class TradingCLI:
                 await self.pubsub.start()
                 self.strategy_manager_enhanced = StrategyManagerEnhanced(self.db_manager, self.pubsub)
                 await self.strategy_manager_enhanced.initialize()
+
+                self.market_data_service = await get_kraken_market_service(self.pubsub )
                 self.workflow_running = True
             
             return True

@@ -2,7 +2,7 @@
 Strategy Manager Enhanced avec Queue Workflow
 Intègre le nouveau workflow de stratégie avec le système existant
 """
-
+import click
 import asyncio
 import logging
 from typing import Dict, List, Optional
@@ -235,6 +235,7 @@ class StrategyManagerEnhanced:
                            api_key: str = "", api_secret: str = "") -> bool:
         """Démarre une stratégie avec le nouveau workflow"""
         try:
+            click.echo(f"🔍 [TRACE] STRATEGY START", err=True)
             if session_id in self.active_strategies:
                 logger.warning(f"Strategy {session_id} already running")
                 return False

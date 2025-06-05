@@ -4,7 +4,6 @@ from datetime import datetime, UTC
 from data.models import Session, SessionMode, SessionStatus, StrategyConfig
 from data.persistence import DatabaseManager
 
-
 class SessionManager:
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
@@ -31,7 +30,8 @@ class SessionManager:
             
         if session.status != SessionStatus.CREATED and session.status != SessionStatus.PAUSED:
             return False
-            
+
+
         session.status = SessionStatus.RUNNING
         session.updated_at = datetime.now(UTC)
         await self.db_manager.save_session(session)
