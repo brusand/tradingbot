@@ -1,55 +1,63 @@
-indicators:
-  EMA:
-    default_parameters:
-      period: 20
-    description: Exponential Moving Average
-    source: close
-    type: EMA
-    workflow_support: true
-
-risk_profiles:
-  default:
-    name: "Profil par d\xE9faut"
+indicators: {}
+risk_profils:
+  aggressive:
+    RR: 2
+    max_concurrent_trades: 5
+    name: Profil Agressif
+    position_size_value: 5.0
+    stop_loss_percent: 1.5
+    take_profit_percent: 6.0
+  conservative:
+    RR: 1
     max_concurrent_trades: 2
-    max_daily_loss: 500.0
-    max_position_size: 0.1
-    position_size_method: percent
-    risk_ratio: 1.5
+    name: Profil Conservateur
+    position_size_value: 1.0
+    stop_loss_percent: 3.0
+    take_profit_percent: 3.0
+  default:
+    RR: 1.5
+    max_concurrent_trades: 3
+    name: "Profil par d\xE9faut"
+    position_size_value: 2.0
     stop_loss_percent: 2.0
     take_profit_percent: 4.0
-
-sessions:
-  candles-session:
-    created_at: '2025-05-31T20:07:16.785723+00:00'
-    id: candle-session
-    mode: sandbox
-    name: Candles
-    status: created
-    strategies: [Candles]
-    workflow_enabled: true
+sessions: {}
 strategies:
-  Candles:
-    created_at: '2025-05-31T20:04:58.810253+00:00'
+  ema_grid_test:
+    created_at: '2025-06-04T08:48:10.951481+00:00'
     end_date: now
-    id: candles
-    indicators: {}
-    name: candles
+    id: ema_grid_test
+    indicators:
+      LONG:
+        parameters:
+          name: LONG
+          period: 100
+          source: close
+        source: close
+        type: EMA
+      SHORT:
+        parameters:
+          name: SHORT
+          period: 9
+          source: close
+        source: close
+        type: EMA
+    initial_balance: 100.0
+    name: EMA Grid Test
     parameters: {}
-    signal_rules:
-      long_condition: null
-      short_condition: null
-    start_date: '2025-05-01T00:00:00.0+00:00'
-    status: inactive
-    symbol: ETHUSDC
-    timeframe: 15m
-    workflow_enabled: true
-    initial_balance: 100
     risk_management:
-      max_concurrent_trades: 2
-      max_daily_loss: 500.0
-      max_position_size: 0.1
-      position_size_method: percent
-      risk_ratio: 1.5
+      RR: 1.5
+      max_concurrent_trades: 3
+      name: "Profil par d\xE9faut"
+      position_size_value: 2.0
+      risk_profil: default
       stop_loss_percent: 2.0
       take_profit_percent: 4.0
-}
+    signal_rules:
+      long_condition: SHORT > LONG & SHORT[-1] < LONG[-1]
+      short_condition: SHORT < LONG & SHORT[-1] > LONG[-1]
+    start_date: '2025-01-01'
+    status: inactive
+    symbol: BTCUSDC
+    timeframe: 15m
+    workflow_enabled: true

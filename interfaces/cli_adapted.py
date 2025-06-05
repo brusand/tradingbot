@@ -22,7 +22,7 @@ class TradingCLI:
         # Registres basés sur le prompt
         self.strategies_registry = {}
         self.indicators_registry = {}
-        self.risk_profiles_registry = {}
+        self.risk_profils_registry = {}
         self.sessions_registry = {}
         
         # Charger configuration
@@ -38,7 +38,7 @@ class TradingCLI:
                 config = yaml.safe_load(f)
                 self.strategies_registry = config.get('strategies', {})
                 self.indicators_registry = config.get('indicators', {})
-                self.risk_profiles_registry = config.get('risk_profiles', {})
+                self.risk_profils_registry = config.get('risk_profils', {})
                 self.sessions_registry = config.get('sessions', {})
     
     def _save_configuration(self):
@@ -46,7 +46,7 @@ class TradingCLI:
         config = {
             'strategies': self.strategies_registry,
             'indicators': self.indicators_registry,
-            'risk_profiles': self.risk_profiles_registry,
+            'risk_profils': self.risk_profils_registry,
             'sessions': self.sessions_registry
         }
         
@@ -314,9 +314,9 @@ def show_session(ctx, session_id, detailed, trades, export):
                 click.echo(f"  ⏰ Timeframe: {strategy.get('timeframe', 'Non défini')}")
                 
                 # Risk profile
-                risk_profile_id = strategy.get('risk_profile', 'default')
-                if risk_profile_id in trading_cli.risk_profiles_registry:
-                    risk_profile = trading_cli.risk_profiles_registry[risk_profile_id]
+                risk_profile_id = strategy.get('risk_profil', 'default')
+                if risk_profile_id in trading_cli.risk_profils_registry:
+                    risk_profile = trading_cli.risk_profils_registry[risk_profile_id]
                     click.echo(f"  🛡️ Risk Profile: {risk_profile.get('name', risk_profile_id)}")
                     click.echo(f"    - Position Size: {risk_profile.get('position_size_value', 0)}%")
                     click.echo(f"    - Stop Loss: {risk_profile.get('stop_loss_percent', 0)}%")

@@ -29,7 +29,7 @@ indicators:
     source: close
     type: SMA
     workflow_support: true
-risk_profiles:
+risk_profils:
   aggressive:
     max_concurrent_trades: 5
     max_daily_loss: 1000.0

@@ -34,6 +34,7 @@ except ImportError:
         
         return "\n".join(result)
 
+
 # Imports du système
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,21 +45,13 @@ from core.session_manager import SessionManager
 from core.strategy_engine import StrategyEngine
 
 # Imports smart filters
-try:
-    from utils.smart_filters import (
-        smart_resolve_ids, SessionFilter, StrategyFilter, 
-        UniversalFilter, smart_resolve_params
-    )
-    SMART_FILTERS_AVAILABLE = True
-except ImportError:
-    SMART_FILTERS_AVAILABLE = False
-    click.echo("⚠️ Smart filters non disponibles")
-    
-    # Décorateur fallback vide
-    def smart_resolve_params(**kwargs):
-        def decorator(func):
-            return func
-        return decorator
+
+from utils.smart_filters import (
+    smart_resolve_ids, SessionFilter, StrategyFilter,
+    UniversalFilter, smart_resolve_params
+)
+SMART_FILTERS_AVAILABLE = True
+click.echo("⚠️ Smart filters disponibles")
 
 # Imports workflow avancé
 try:
@@ -80,6 +73,15 @@ try:
     MULTI_SESSION_AVAILABLE = True
 except ImportError:
     MULTI_SESSION_AVAILABLE = False
+
+# Aussi, ajouter ces imports en haut du fichier trading_cli_v4.py (après les autres imports)
+try:
+    from grid_generator import StrategyGridGenerator
+
+    GRID_GENERATOR_AVAILABLE = True
+except ImportError:
+    GRID_GENERATOR_AVAILABLE = False
+    click.echo("⚠️ Générateur de grid non disponible")
 
 class TradingCLI:
     """CLI Unifié avec support de toutes les fonctionnalités"""
@@ -103,7 +105,7 @@ class TradingCLI:
         # Registres de configuration (CLI Adapted)
         self.strategies_registry = {}
         self.indicators_registry = {}
-        self.candles_registry = {}
+        self.risk_profils_registry = {}
         self.sessions_registry = {}
         
         # Cache pour performances
@@ -120,13 +122,14 @@ class TradingCLI:
             try:
                 with open(self.config_path, 'r') as f:
                     config = yaml.safe_load(f) or {}
-                    # S'assurer que les registres ne sont jamais None
-                    self.strategies_registry = config.get('strategies') or {}
-                    self.indicators_registry = config.get('indicators') or {}
-                    self.sessions_registry = config.get('sessions') or {}
+                    self.strategies_registry = config.get('strategies', {})
+                    self.indicators_registry = config.get('indicators', {})
+                    self.risk_profils_registry = config.get('risk_profils', {})
+                    self.sessions_registry = config.get('sessions', {})
             except Exception as e:
                 click.echo(f"⚠️ Erreur de chargement config: {e}")
                 # En cas d'erreur, initialiser avec des dictionnaires vides
+                self.risk_profils_registry = {}
                 self.strategies_registry = {}
                 self.indicators_registry = {}
                 self.sessions_registry = {}
@@ -136,6 +139,7 @@ class TradingCLI:
         config = {
             'strategies': self.strategies_registry,
             'indicators': self.indicators_registry,
+            'risk_profils': self.risk_profils_registry,
             'sessions': self.sessions_registry
         }
         
@@ -147,8 +151,19 @@ class TradingCLI:
             click.echo(f"⚠️ Erreur de sauvegarde config: {e}")
     
     def _initialize_defaults(self):
-        """Initialise les configurations par défaut"""
-        pass
+        """Initialise les profils par défaut"""
+        if 'default' not in self.risk_profils_registry:
+            self.risk_profils_registry['default'] = {
+                'name': 'Profil par défaut',
+                'position_size_method': 'percent',
+                'position_size_value': 2.0,
+                'max_concurrent_trades': 3,
+                'max_daily_loss': 500.0,
+                'stop_loss_percent': 2.0,
+                'take_profit_percent': 4.0,
+                'trailing_stop': False,
+                'RR': 1.5
+            }
     
     async def initialize_system(self):
         """Initialise le système complet"""
@@ -368,7 +383,8 @@ def system_status(ctx, detailed):
     click.echo(f"\n📋 CONFIGURATION:")
     click.echo(f"  Stratégies: {len(trading_cli.strategies_registry)}")
     click.echo(f"  Sessions: {len(trading_cli.sessions_registry)}")
-    
+    click.echo(f"  Profils risque: {len(trading_cli.risk_profils_registry)}")
+
     if detailed and trading_cli.workflow_running:
         async def _detailed_status():
             global_metrics = trading_cli.strategy_manager_enhanced.get_global_metrics()
@@ -1122,6 +1138,7 @@ def create_strategy(ctx, name, strategy_id, no_workflow, workflow, interactive, 
             'short_condition': None
         },
         'risk_profile': 'default',
+        'risk_management': {},
         'start_date': '2025-01-01',
         'end_date': 'now',
         'status': 'inactive',
@@ -1251,7 +1268,10 @@ def show_strategy(ctx, strategy_id):
     click.echo(f"  SHORT: {strategy['signal_rules'].get('short_condition', 'Non défini')}")
     
     # Risk Management supprimé - maintenant géré au niveau des stratégies individuelles
-    
+    click.echo(f"  Risk Management:")
+    for ind_name, ind_config in strategy.get('risk_management', {}).items():
+        click.echo(f"  - {ind_name}: {ind_config}")
+
     click.echo(f"\n🔧 Indicateurs ({len(strategy.get('indicators', {}))}):")
     for ind_name, ind_config in strategy.get('indicators', {}).items():
         click.echo(f"  - {ind_name}: {ind_config.get('type', 'N/A')}({ind_config.get('parameters', {})})")
@@ -1289,14 +1309,14 @@ def show_strategy(ctx, strategy_id):
         elif strategy.get('status') == 'active':
             click.echo(f"  🟢 En cours d'exécution...")
 
-def _show_stratey_logic(ctx, strategy):
+def _show_stratey_logic(ctx, strategy, trading_cli):
     click.echo(f"📋 Détails de la stratégie :")
     click.echo(f"  Nom: {strategy['name']}")
     click.echo(f"  Paire: {strategy.get('symbol', 'Non défini')}")
     click.echo(f"  Timeframe: {strategy.get('timeframe', 'Non défini')}")
     click.echo(f"  Date début: {strategy.get('start_date', 'Non défini')}")
     click.echo(f"  Date fin: {strategy.get('end_date', 'now')}")
-    click.echo(f"  Risk Profile: {strategy.get('risk_profile', 'default')}")
+
     click.echo(f"  Status: {strategy.get('status', 'inactive')}")
     click.echo(f"  Workflow: {'🚀 Activé' if strategy.get('workflow_enabled') else '❌ Désactivé'}")
 
@@ -1340,6 +1360,10 @@ def _show_stratey_logic(ctx, strategy):
     click.echo(f"\n🔧 Indicateurs ({len(strategy.get('indicators', {}))}):")
     for ind_name, ind_config in strategy.get('indicators', {}).items():
         click.echo(f"  - {ind_name}: {ind_config.get('type', 'N/A')}({ind_config.get('parameters', {})})")
+
+    click.echo(f"  Risk Management:")
+    for ind_name, ind_config in strategy.get('risk_management', {}).items():
+        click.echo(f"  - {ind_name}: {ind_config}")
 
 def _edit_strategy_logic(ctx, strategy_id, section, trading_cli):
     """Logique d'édition de stratégie réutilisable"""
@@ -1706,6 +1730,42 @@ def _edit_strategy_logic(ctx, strategy_id, section, trading_cli):
 
         click.echo()
 
+
+    # Section: Règles de signaux
+    if section in ['risk_management', 'all']:
+        click.echo("🎯 RÈGLES DE RISK MANAGEMENT")
+        click.echo("-" * 30)
+
+        if not strategy.get('risk_management'):
+            strategy['risk_management'] = {}
+
+        # list des profils de risk management
+
+        click.echo(f"\n🔹 Risk profils: {trading_cli.risk_profils_registry.keys()}")
+        # saisie du profil
+        risk_profil = strategy['risk_management'].get('risk_profil', 'default')
+        risk_profil = click.prompt(f"  Risk profil[{risk_profil}]", default=risk_profil, show_default=False)
+        # saisie des parametres
+
+        # Modifier les params du profil
+        for risk_name, risk_value in trading_cli.risk_profils_registry.get(risk_profil, {}).items():
+
+            new_risk = click.prompt(f"  {risk_name} [{risk_value}]",
+                                     default=str(risk_value), show_default=False)
+            if new_risk and risk_value != 'skip':
+                try:
+                    if isinstance(risk_value, int):
+                        strategy['risk_management'][risk_name]= int(new_risk)
+
+                    elif isinstance(risk_value, float):
+                        strategy['risk_management'][risk_name]= float(new_risk)
+                    else:
+                        strategy['risk_management'][risk_name] = new_risk
+                except ValueError:
+                    click.echo(f"⚠️ Valeur invalide pour {risk_name}")
+
+        click.echo()
+
     # Résumé des changements
     click.echo("📝 RÉSUMÉ DES MODIFICATIONS")
     click.echo("=" * 40)
@@ -1714,7 +1774,7 @@ def _edit_strategy_logic(ctx, strategy_id, section, trading_cli):
     #if strategy != original_strategy:
     #    changes_made = True
     click.echo("Stratégie modifiées:")
-    _show_stratey_logic(ctx, strategy)
+    _show_stratey_logic(ctx, strategy, trading_cli)
 
     # Confirmation et sauvegarde
     if click.confirm("\nSauvegarder les modifications?"):
@@ -1849,6 +1909,224 @@ def delete_strategy(ctx, strategy_id, force, remove_from_sessions):
     if remaining_sessions > 0:
         click.echo(f"⚠️ La stratégie reste référencée dans {remaining_sessions} session(s)")
         click.echo("💡 Utilisez 'session show <session_id>' pour vérifier")
+
+
+
+
+#====================
+# Grid generator
+#===================
+# À ajouter dans trading_cli_v4.py dans le groupe @strategy
+
+@strategy.command('grid')
+@click.argument('strategy_id')
+@click.option('--name-pattern',
+              help='Pattern pour nommer les stratégies (ex: {base_name}_EMA{indicators_LONG_parameters_period}_{indicators_SHORT_parameters_period})')
+@click.option('--export', help='Exporter vers fichier YAML en plus du registre')
+@click.option('--dry-run', is_flag=True, help='Simuler sans sauvegarder')
+@click.option('--max-combinations', default=100, type=int, help='Limite du nombre de combinaisons (sécurité)')
+@click.option('--confirm', is_flag=True, help='Demander confirmation avant génération')
+@click.pass_context
+@smart_resolve_params(strategy_id='strategy')
+@trace_decorator
+def grid_strategies(ctx, strategy_id, name_pattern, export, dry_run, max_combinations, confirm):
+    """Générer un grid de stratégies à partir des valeurs séparées par '-'"""
+    trading_cli = ctx.obj['cli']
+
+    # Importer le générateur de grid
+    from grid_generator import StrategyGridGenerator
+
+    # Initialiser le registre s'il n'existe pas
+    if trading_cli.strategies_registry is None:
+        trading_cli.strategies_registry = {}
+
+    if strategy_id not in trading_cli.strategies_registry:
+        click.echo(f"❌ Stratégie '{strategy_id}' introuvable!")
+        return
+
+    try:
+        # Créer le générateur avec référence au CLI
+        generator = StrategyGridGenerator(trading_cli)
+
+        # Charger la stratégie de base depuis le registre
+        base_strategy = generator.load_base_strategy_from_registry(strategy_id)
+        base_strategy_name = base_strategy.get('name', strategy_id)
+
+        click.echo(f"🎯 GÉNÉRATION GRID POUR: {base_strategy_name}")
+        click.echo("=" * 60)
+
+        # Analyser les paramètres de grid disponibles
+        grid_params = generator.find_grid_parameters(base_strategy)
+
+        if not grid_params:
+            click.echo("❌ Aucun paramètre de grid détecté dans cette stratégie")
+            click.echo("💡 Les paramètres de grid utilisent le format 'valeur_min-valeur_max'")
+            click.echo("   Exemple: period: 20-30, stop_loss_percent: 0.5-4")
+            return
+
+        # Afficher les paramètres détectés
+        click.echo("📊 PARAMÈTRES DE GRID DÉTECTÉS:")
+        total_combinations = 1
+        for param_path, values in grid_params.items():
+            click.echo(f"  🔧 {param_path}: {values} ({len(values)} valeurs)")
+            total_combinations *= len(values)
+
+        click.echo(f"\n📈 TOTAL COMBINAISONS: {total_combinations}")
+
+        # Vérification de sécurité
+        if total_combinations > max_combinations:
+            click.echo(f"⚠️ ATTENTION: {total_combinations} combinaisons dépasse la limite de {max_combinations}")
+            click.echo(f"   Cela pourrait générer un très grand nombre de stratégies!")
+
+            if not click.confirm("Continuer malgré tout?"):
+                click.echo("❌ Génération annulée")
+                return
+
+        # Confirmation optionnelle
+        if confirm and not dry_run:
+            if not click.confirm(f"Générer {total_combinations} stratégies dans le registre?"):
+                click.echo("❌ Génération annulée")
+                return
+
+        # Générer les combinaisons
+        click.echo(f"\n🚀 GÉNÉRATION EN COURS...")
+        strategies = generator.generate_strategy_combinations(
+            base_strategy_name,
+            name_pattern
+        )
+
+        if dry_run:
+            # Mode simulation
+            click.echo(f"\n🔍 MODE SIMULATION (DRY-RUN)")
+            click.echo(f"✅ {len(strategies)} stratégies seraient générées")
+
+            # Afficher quelques exemples
+            click.echo(f"\n📋 EXEMPLES DE STRATÉGIES GÉNÉRÉES:")
+            for i, strategy in enumerate(strategies[:5]):  # Montrer les 5 premières
+                grid_info = strategy.get('grid_info', {})
+                params = grid_info.get('parameters', {})
+                click.echo(f"  {i + 1}. {strategy['id']}")
+                click.echo(f"     Nom: {strategy['name']}")
+                for param_path, value in params.items():
+                    click.echo(f"     {param_path}: {value}")
+                click.echo()
+
+            if len(strategies) > 5:
+                click.echo(f"  ... et {len(strategies) - 5} autres stratégies")
+
+            click.echo("💡 Utilisez la commande sans --dry-run pour générer réellement")
+            return
+
+        # Sauvegarder dans le registre
+        saved_count = generator.save_grid_strategies_to_cli(strategies)
+
+        # Export optionnel vers fichier
+        if export:
+            generator.save_grid_strategies(strategies, export)
+            click.echo(f"💾 Stratégies également exportées vers {export}")
+
+        # Résumé
+        click.echo(f"\n✅ GÉNÉRATION TERMINÉE!")
+        click.echo(f"📊 {saved_count} nouvelles stratégies créées")
+        click.echo(f"📁 Total stratégies dans le registre: {len(trading_cli.strategies_registry)}")
+
+        # Afficher un aperçu des stratégies créées
+        if saved_count > 0:
+            click.echo(f"\n🎯 APERÇU DES STRATÉGIES CRÉÉES:")
+            grid_strategies = [s for s in strategies if s['id'] in trading_cli.strategies_registry]
+
+            for i, strategy in enumerate(grid_strategies[:3], 1):  # Montrer les 3 premières
+                grid_info = strategy.get('grid_info', {})
+                params = grid_info.get('parameters', {})
+                click.echo(f"  {i}. {strategy['id']}")
+                for param_path, value in params.items():
+                    short_param = param_path.split('.')[-1]
+                    click.echo(f"     {short_param}: {value}")
+
+            if len(grid_strategies) > 3:
+                click.echo(f"  ... et {len(grid_strategies) - 3} autres")
+
+        # Suggestions d'utilisation
+        click.echo(f"\n💡 PROCHAINES ÉTAPES:")
+        click.echo(f"  • Utilisez 'strategy list --filter-workflow' pour voir toutes les stratégies")
+        click.echo(f"  • Créez une session et ajoutez-y les stratégies grid")
+        click.echo(f"  • Lancez 'performance best-strategies' pour comparer les résultats")
+
+    except Exception as e:
+        click.echo(f"❌ Erreur lors de la génération: {e}")
+        if dry_run:
+            click.echo("💡 Vérifiez la structure de votre stratégie de base")
+
+
+# Et ajouter cette commande pour nettoyer les stratégies grid
+@strategy.command('clean-grid')
+@click.option('--base-strategy', help='Nettoyer seulement les stratégies d\'un base spécifique')
+@click.option('--confirm', is_flag=True, help='Demander confirmation pour chaque suppression')
+@click.option('--force', is_flag=True, help='Supprimer sans confirmation')
+@click.pass_context
+@trace_decorator
+def clean_grid_strategies(ctx, base_strategy, confirm, force):
+    """Nettoyer les stratégies générées par grid"""
+    trading_cli = ctx.obj['cli']
+
+    if trading_cli.strategies_registry is None:
+        trading_cli.strategies_registry = {}
+
+    # Trouver toutes les stratégies grid
+    grid_strategies = []
+    for strategy_id, strategy in trading_cli.strategies_registry.items():
+        if strategy.get('grid_info'):
+            if base_strategy and strategy['grid_info'].get('base_strategy') != base_strategy:
+                continue
+            grid_strategies.append((strategy_id, strategy))
+
+    if not grid_strategies:
+        filter_msg = f" pour '{base_strategy}'" if base_strategy else ""
+        click.echo(f"❌ Aucune stratégie grid trouvée{filter_msg}")
+        return
+
+    click.echo(f"🧹 NETTOYAGE DES STRATÉGIES GRID")
+    click.echo("=" * 50)
+    click.echo(f"📊 {len(grid_strategies)} stratégies grid trouvées")
+
+    # Grouper par stratégie de base
+    by_base = {}
+    for strategy_id, strategy in grid_strategies:
+        base_name = strategy['grid_info'].get('base_strategy', 'Unknown')
+        if base_name not in by_base:
+            by_base[base_name] = []
+        by_base[base_name].append((strategy_id, strategy))
+
+    # Afficher le résumé
+    for base_name, strategies in by_base.items():
+        click.echo(f"  📁 {base_name}: {len(strategies)} stratégies")
+
+    # Confirmation globale
+    if not force:
+        if not click.confirm(f"\n🗑️ Supprimer {len(grid_strategies)} stratégies grid?"):
+            click.echo("❌ Nettoyage annulé")
+            return
+
+    # Suppression
+    deleted_count = 0
+    for strategy_id, strategy in grid_strategies:
+        should_delete = True
+
+        if confirm and not force:
+            base_name = strategy['grid_info'].get('base_strategy', 'Unknown')
+            should_delete = click.confirm(f"Supprimer '{strategy_id}' (base: {base_name})?")
+
+        if should_delete:
+            del trading_cli.strategies_registry[strategy_id]
+            deleted_count += 1
+
+    # Sauvegarder
+    trading_cli._save_configuration()
+
+    click.echo(f"\n✅ {deleted_count} stratégies grid supprimées")
+    click.echo(f"📁 {len(trading_cli.strategies_registry)} stratégies restantes dans le registre")
+
+
 
 # ============================================================================
 # COMMANDES PERFORMANCE TRACKING
@@ -2456,14 +2734,13 @@ def init_system(ctx, force):
                     'long_condition': 'SMA_10 > SMA_30 & SMA_10[-1] <= SMA_30[-1] & RSI_14 < 70',
                     'short_condition': 'SMA_10 < SMA_30 & SMA_10[-1] >= SMA_30[-1] & RSI_14 > 30'
                 },
-                'risk_profiles': {
-                    'default': {
-                        'name': 'Profil par défaut',
-                        'position_size_value': 2.0,
-                        'max_concurrent_trades': 3,
-                        'stop_loss_percent': 2.0,
-                        'take_profit_percent': 4.0
-                    }
+                'risk_management': {
+                    'profil': 'default',
+                    'position_size_value': 2.0,
+                    'max_concurrent_trades': 3,
+                    'stop_loss_percent': 2.0,
+                    'take_profit_percent': 4.0,
+                    'risk_ratio': 1.5
                 },
                 'workflow_enabled': True,
                 'status': 'configured',
@@ -2480,13 +2757,23 @@ def init_system(ctx, force):
                 'status': 'configured',
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
+        },
+        'risk_profils': {
+            'default': {
+                'name': 'Profil par défaut',
+                'position_size_value': 2.0,
+                'max_concurrent_trades': 3,
+                'stop_loss_percent': 2.0,
+                'take_profit_percent': 4.0,
+                'RR': 1.5
+            }
         }
     }
     
     # Sauvegarder
     trading_cli.strategies_registry = default_config['strategies']
     trading_cli.sessions_registry = default_config['sessions']
-    trading_cli.risk_profiles_registry = default_config['risk_profiles']
+    trading_cli.risk_profils_registry = default_config['risk_profils']
     trading_cli._save_configuration()
     
     click.echo("✅ Système initialisé avec configuration par défaut")

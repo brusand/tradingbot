@@ -1,19 +1,29 @@
 indicators: {}
+risk_profils:
+  default:
+    RR: 1.5
+    max_concurrent_trades: 3
+    name: "Profil par d\xE9faut"
+    position_size_value: 2.0
+    stop_loss_percent: 2.0
+    take_profit_percent: 4.0
 sessions:
-  session_20250602_180629:
-    created_at: '2025-06-02T16:06:29.804207+00:00'
-    id: session_20250602_180629
+  session_20250605_092151:
+    created_at: '2025-06-05T07:21:51.469589+00:00'
+    id: session_20250605_092151
+    killed_at: '2025-06-05T07:27:49.882281+00:00'
     mode: paper
-    name: Test
-    start_time: '2025-06-02T16:07:43.443788+00:00'
-    status: running
-    strategies: []
+    name: ema grid
+    start_time: '2025-06-05T07:27:12.653315+00:00'
+    status: killed
+    strategies:
+    - ema_grid_test
     workflow_enabled: true
 strategies:
-  ema_crossover:
-    created_at: '2025-06-03T11:35:40.031074+00:00'
+  ema_grid_test:
+    created_at: '2025-06-04T08:48:10.951481+00:00'
     end_date: now
-    id: ema_crossover
+    id: ema_grid_test
     indicators:
       LONG:
         parameters:
@@ -25,14 +35,21 @@ strategies:
       SHORT:
         parameters:
           name: SHORT
-          period: 20
+          period: 9
           source: close
         source: close
         type: EMA
     initial_balance: 100.0
-    name: EMA CROSSOVER
+    name: EMA Grid Test
     parameters: {}
-    risk_profile: default
+    risk_management:
+      RR: 1.5
+      max_concurrent_trades: 3
+      name: "Profil par d\xE9faut"
+      position_size_value: 2.0
+      risk_profil: default
+      stop_loss_percent: 2.0
+      take_profit_percent: 4.0
     signal_rules:
       long_condition: SHORT > LONG & SHORT[-1] < LONG[-1]
       short_condition: SHORT < LONG & SHORT[-1] > LONG[-1]

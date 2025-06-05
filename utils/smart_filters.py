@@ -317,7 +317,7 @@ def smart_resolve_params(**param_configs):
                         )
                     elif entity_type == 'risk_profile':
                         resolved_id, error = UniversalFilter.resolve_risk_profile(
-                            query, trading_cli.risk_profiles_registry
+                            query, trading_cli.risk_profils_registry
                         )
                     else:
                         # Pas de résolution pour ce type

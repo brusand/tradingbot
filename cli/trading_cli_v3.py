@@ -54,7 +54,7 @@ class TradingCLI:
         # Registres
         self.strategies_registry = {}
         self.indicators_registry = {}
-        self.risk_profiles_registry = {}
+        self.risk_profils_registry = {}
         self.sessions_registry = {}
         
         # État du système
@@ -70,7 +70,7 @@ class TradingCLI:
                 config = yaml.safe_load(f)
                 self.strategies_registry = config.get('strategies', {})
                 self.indicators_registry = config.get('indicators', {})
-                self.risk_profiles_registry = config.get('risk_profiles', {})
+                self.risk_profils_registry = config.get('risk_profils', {})
                 self.sessions_registry = config.get('sessions', {})
     
     def _save_configuration(self):
@@ -78,7 +78,7 @@ class TradingCLI:
         config = {
             'strategies': self.strategies_registry,
             'indicators': self.indicators_registry,
-            'risk_profiles': self.risk_profiles_registry,
+            'risk_profils': self.risk_profils_registry,
             'sessions': self.sessions_registry
         }
         
