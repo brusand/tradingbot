@@ -14,14 +14,15 @@ class DatabaseConfig:
 
 
 @dataclass
-class KrakenConfig:
+class ConnectorConfig:
+    connector: str = ""
     api_key: str = ""
     api_secret: str = ""
     sandbox: bool = False
     paper: bool = True
     rate_limit: int = 20
     timeout: int = 30
-
+    tick_type: str = ""
 
 @dataclass
 class TradingConfig:
@@ -47,14 +48,16 @@ class Settings:
             pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
             timeout=int(os.getenv("DB_TIMEOUT", "30"))
         )
-        
-        self.kraken = KrakenConfig(
-            api_key=os.getenv("KRAKEN_API_KEY", ""),
-            api_secret=os.getenv("KRAKEN_API_SECRET", ""),
-            sandbox=os.getenv("KRAKEN_SANDBOX", "true").lower() == "true",
-            paper=os.getenv("KRAKEN_PAPER", "true").lower() == "true",
-            rate_limit=int(os.getenv("KRAKEN_RATE_LIMIT", "20")),
-            timeout=int(os.getenv("KRAKEN_TIMEOUT", "30"))
+        self.exchange = os.getenv("EXCHANGE", "KRAKEN")
+        self.exchange = ConnectorConfig(
+            connector = os.getenv(f'''{self.exchange}_CONNECTOR''', ""),
+            api_key=os.getenv(f'''{self.exchange}_API_KEY''', ""),
+            api_secret=os.getenv(f'''{self.exchange}_API_SECRET''', ""),
+            sandbox=os.getenv(f'''{self.exchange}_SANDBOX''', "false").lower() == "true",
+            paper=os.getenv(f'''{self.exchange}_PAPER''', "true").lower() == "true",
+            rate_limit=int(os.getenv(f'''{self.exchange}_RATE_LIMIT''', "20")),
+            timeout=int(os.getenv(f'''{self.exchange}_TIMEOUT''', "30")),
+            tick_type=os.getenv(f'''{self.exchange}_TICK_TYPE''', "spot"),
         )
         
         self.trading = TradingConfig(
@@ -76,9 +79,10 @@ class Settings:
         """Convert settings to dictionary"""
         return {
             "database": self.database.__dict__,
-            "kraken": {k: v for k, v in self.kraken.__dict__.items() if k not in ["api_key", "api_secret"]},
+            "connector":  self.connector.__dict__,
             "trading": self.trading.__dict__,
-            "logging": self.logging.__dict__
+            "logging": self.logging.__dict__,
+            "exchanges": self.exchanges.__dict__
         }
     
     def validate(self) -> bool:
@@ -97,4 +101,13 @@ class Settings:
 
 
 # Global settings instance
-settings = Settings()
+_settings_instance = None
+
+
+async def get_settings_service() -> Settings:
+    """Factory pour obtenir l'instance du service Market"""
+    global _settings_instance
+
+    if _settings_instance is None:
+        _settings_instance = Settings()
+    return _settings_instance

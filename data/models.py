@@ -31,14 +31,19 @@ class RiskConfig:
 
 @dataclass
 class StrategyConfig:
+    id: str
     name: str
     parameters: Dict[str, Any]
     timeframe: str
     pairs: List[str]
-    since: str
-    to: str
+    start_date: str
+    end_date: str
+    historic: int
+    exchange: str
+    # Nouvelles propriétés pour le workflow
+    max_dataframe_size: int
     risk_config: Optional[RiskConfig] = None  # Risk management au niveau stratégie
-    initial_balance: float = 10000.0  # Balance initiale de la stratégie
+    initial_balance: float = 100.0  # Balance initiale de la stratégie
     current_balance: Optional[float] = None  # Balance courante (sera mise à jour)
 
 
@@ -85,6 +90,7 @@ class Session:
 class Trade:
     id: str
     session_id: str
+    strategy_id: str
     symbol: str
     side: str  # buy/sell
     amount: float

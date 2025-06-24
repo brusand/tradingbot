@@ -17,6 +17,7 @@ from data.models import StrategyConfig
 from core.pubsub_engine import PubSubEngine
 from core.channels import CHANNELS
 from core.balance_tracker import BalanceTracker
+from services.market_service import get_market_service
 from strategies.performance_tracker import PerformanceTracker
 
 logger = logging.getLogger(__name__)
@@ -211,6 +212,9 @@ class TradingStrategy:
         """Arrête la stratégie"""
         self.is_running = False
         
+        # Publier un message de désabonnement au market service
+        await self._unsubscribe_from_market_data()
+        
         if self.candle_processor_task:
             self.candle_processor_task.cancel()
             try:
@@ -223,7 +227,7 @@ class TradingStrategy:
     async def _subscribe_to_candles(self):
         """S'abonne aux candles pour ce symbol/timeframe"""
         channel = CHANNELS.MARKET_DATA.format(
-            symbol=self.config.pairs[0] if self.config.pairs else "BTCUSD",  # Premier symbole
+            symbol=self.config.pairs[0] if self.config.pairs else "BTCUSDC",  # Premier symbole
             timeframe=self.config.timeframe
         )
         await self.pubsub.subscribe(channel, self.on_new_candle, weak_ref=False)
@@ -234,9 +238,9 @@ class TradingStrategy:
         symbol = self.config.pairs[0] if self.config.pairs else getattr(self.config, 'symbol', 'BTCUSD')
         timeframe = getattr(self.config, 'timeframe', '5m')
         
-        # Canal de réponse : market.data.<pair>.<tf>.candles
-        response_channel = f"market.data.{symbol}.{timeframe}.{self.config.name}"
-        await self.pubsub.subscribe(response_channel, self.on_kraken_candle_response, weak_ref=False)
+        # Canal de réponse : market.data.response.<pair>.<tf>.<strategy_id>
+        response_channel = f"market.data.response.{symbol}.{timeframe}.{self.config.id}"
+        await self.pubsub.subscribe(response_channel, self.on_market_data_response, weak_ref=False)
         logger.info(f"Subscribed to Kraken responses: {response_channel}")
     
     async def _request_market_data(self):
@@ -244,24 +248,51 @@ class TradingStrategy:
         symbol = self.config.pairs[0] if self.config.pairs else getattr(self.config, 'symbol', 'BTCUSD')
         timeframe = getattr(self.config, 'timeframe', '5m')
         
-        # Canal de demande : market.data.<pair>.<tf>
-        request_channel = f"market.data.{symbol}.{timeframe}"
+        # Canal de demande : market.data.request.<pair>.<tf>
+        request_channel = f"market.data.request.{symbol}.{timeframe}"
         
         # Message de demande avec la stratégie émettrice
         request_data = {
-            "strategy_id": self.config.name,
+            "strategy_id": self.config.id,
             "symbol": symbol,
             "timeframe": timeframe,
-            "since": self.config.since,
-            "to": self.config.to,
-            "action": "subscribe",
+            "since": self.config.start_date,
+            "to": self.config.end_date,
+            "historic": self.config.historic,
+            "action": "request",
             "timestamp": datetime.now(timezone.utc).timestamp()
         }
         
         await self.pubsub.publish(request_channel, request_data)
+        #candles_data = await get_market_service()._fetch_candles_data(symbol, timeframe, self.config.start_date, self.config.end_date, self.config.historic)
+
         logger.info(f"Published market data request: {request_channel}")
     
-    async def on_kraken_candle_response(self, response_data: Dict, metadata):
+    async def _unsubscribe_from_market_data(self):
+        """Publie une demande de désabonnement du market service"""
+        try:
+            symbol = self.config.pairs[0] if self.config.pairs else getattr(self.config, 'symbol', 'BTCUSD')
+            timeframe = getattr(self.config, 'timeframe', '5m')
+            
+            # Canal de demande : market.data.request.<pair>.<tf>
+            request_channel = f"market.data.request.{symbol}.{timeframe}"
+            
+            # Message de désabonnement
+            request_data = {
+                "strategy_id": self.config.id,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "action": "unsubscribe",
+                "timestamp": datetime.now(timezone.utc).timestamp()
+            }
+            
+            await self.pubsub.publish(request_channel, request_data)
+            logger.info(f"Published market data unsubscribe request: {request_channel}")
+            
+        except Exception as e:
+            logger.error(f"Error unsubscribing from market data: {e}")
+    
+    async def on_market_data_response(self, response_data: Dict, metadata):
         """Traite les réponses du connecteur Kraken avec DataFrame associée"""
         try:
             # Vérifier que la réponse est pour cette stratégie

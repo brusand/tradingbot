@@ -1,5 +1,8 @@
 import asyncio
+import urllib
+
 import aiohttp
+import ccxt
 import websockets
 import json
 import time
@@ -10,17 +13,24 @@ from urllib.parse import urlencode
 from typing import Dict, List, Optional, Callable, Any
 from datetime import datetime
 import logging
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from interfaces.connector import Connector
 
 
-class KrakenConnector:
-    def __init__(self, api_key: str = "", api_secret: str = "", sandbox: bool = True):
+class KrakenConnector(Connector):
+    def __init__(self, api_key: str = "", api_secret: str = "", sandbox: bool = False, futures: bool=True, tick_type:str='spot'):
         self.api_key = api_key
         self.api_secret = api_secret
         self.sandbox = sandbox
-        
+        self.tick_type = tick_type
         if sandbox:
             self.base_url = "https://api.demo-futures.kraken.com"
             self.ws_url = "wss://demo-futures.kraken.com/ws/v1"
+        elif futures:
+            self.base_url = "https://futures.kraken.com"
         else:
             self.base_url = "https://api.kraken.com"
             self.ws_url = "wss://ws.kraken.com"
@@ -29,12 +39,19 @@ class KrakenConnector:
         self.ws_connection: Optional[websockets.WebSocketServerProtocol] = None
         self.subscriptions: Dict[str, Callable] = {}
         self.rate_limit_lock = asyncio.Semaphore(20)  # 20 requests per second
-        
+        self._ccxt = ccxt.kraken()
+
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
     
     async def __aenter__(self):
-        self.session = aiohttp.ClientSession()
+        import ssl
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        self.session = aiohttp.ClientSession(connector=connector)
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -42,6 +59,8 @@ class KrakenConnector:
             await self.session.close()
         if self.ws_connection:
             await self.ws_connection.close()
+        # Petite pause pour permettre le nettoyage des ressources
+        await asyncio.sleep(0.1)
     
     def _get_kraken_signature(self, urlpath: str, data: Dict) -> str:
         postdata = urlencode(data)
@@ -51,7 +70,34 @@ class KrakenConnector:
         mac = hmac.new(base64.b64decode(self.api_secret), message, hashlib.sha512)
         sigdigest = base64.b64encode(mac.digest())
         return sigdigest.decode()
-    
+
+    async def _make_request_future(self, method: str, endpoint: str, params: Dict = None, private: bool = False) -> Dict:
+        async with self.rate_limit_lock:
+            url = f"{self.base_url}/{endpoint}"
+            headers = {"User-Agent": "TradingBot/1.0"}
+
+            if private and self.api_key and self.api_secret:
+                nonce = str(int(1000 * time.time()))
+                data = params or {}
+                data['nonce'] = nonce
+
+                headers['API-Key'] = self.api_key
+                headers['API-Sign'] = self._get_kraken_signature(f"/0/{endpoint}", data)
+
+                if method == "POST":
+                    async with self.session.post(url, data=data, headers=headers) as response:
+                        return await response.json()
+                else:
+                    async with self.session.get(url, params=data, headers=headers) as response:
+                        return await response.json()
+            else:
+                if method == "POST":
+                    async with self.session.post(url, data=params, headers=headers) as response:
+                        return await response.json()
+                else:
+                    async with self.session.get(url, params=params, headers=headers) as response:
+                        return await response.json()
+
     async def _make_request(self, method: str, endpoint: str, params: Dict = None, private: bool = False) -> Dict:
         async with self.rate_limit_lock:
             url = f"{self.base_url}/0/{endpoint}"
@@ -103,10 +149,23 @@ class KrakenConnector:
             params["since"] = since
         return await self._make_request("GET", "public/Trades", params)
     
-    async def get_ohlc(self, pair: str, interval: int = 1, since: str = None) -> Dict:
+    #async def get_historical_ohlc(self, pair:str, interval: int, since: str, to: str ):
+    #    return await self._ccxt.("GET", "public/OHLC", params)
+
+    async def get_ohlc_future(self, symbol: str, interval: str, since: int = None, to: int = None, limit: int = 700) -> Dict:
+
+        params = {"tick_type": self.tick_type}
+        if since:
+            params["from"] = since
+        if to:
+            params["to"] = to
+        return await self._make_request_future("GET", f'''api/charts/v1/mark/PF_{symbol}/{interval}''', params)
+
+    async def get_ohlc(self, pair: str, interval: int = 1, since: str = None, limit: int=700) -> Dict:
         params = {"pair": pair, "interval": interval}
         if since:
             params["since"] = since
+            params["limit"] = limit
         return await self._make_request("GET", "public/OHLC", params)
     
     # Private API methods

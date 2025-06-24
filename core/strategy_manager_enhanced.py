@@ -26,19 +26,22 @@ class EnhancedStrategyConfig:
     def __init__(self, base_config: StrategyConfig):
         # Copier les propriétés de base
         self.name = base_config.name
+        self.id = base_config.id
         self.pairs = base_config.pairs
         self.timeframe = base_config.timeframe
         self.parameters = base_config.parameters
-        self.since = base_config.since
-        self.to = base_config.to
+        self.start_date = base_config.start_date
+        self.end_date = base_config.end_date
+        self.historic = base_config.historic
+        self.exchange = base_config.exchange
         # Nouvelles propriétés pour le workflow
         self.max_dataframe_size = 1000
         self.indicators = {}
         self.signal_rules = []
         
         # Convertir les paramètres en configuration d'indicateurs
-        self._setup_indicators_from_parameters()
-        self._setup_default_signal_rules()
+        #self._setup_indicators_from_parameters()
+        #self._setup_default_signal_rules()
     
     def _setup_indicators_from_parameters(self):
         """Configure les indicateurs basés sur les paramètres"""
@@ -209,7 +212,7 @@ class StrategyManagerEnhanced:
         
         # Services
         self.indicators_service = IndicatorsService(pubsub)
-        self.candles_service = CandlesService(pubsub)
+        #self.candles_service = CandlesService(pubsub)
         # Stratégies actives
         self.active_strategies: Dict[str, TradingStrategy] = {}
         
@@ -226,7 +229,7 @@ class StrategyManagerEnhanced:
         """Initialise le manager de stratégies"""
         # Démarrer le service d'indicateurs
         await self.indicators_service.start()
-        await self.candles_service.start()
+        #await self.candles_service.start()
 
         self.global_metrics['service_start_time'] = datetime.now(timezone.utc)
         logger.info("Enhanced Strategy Manager initialized")
@@ -241,7 +244,7 @@ class StrategyManagerEnhanced:
                 return False
             
             # Créer une configuration enrichie
-            enhanced_config = EnhancedStrategyConfig(strategy_config)
+            enhanced_config = strategy_config #EnhancedStrategyConfig(strategy_config)
             
             # Créer et démarrer la stratégie
             strategy = TradingStrategy(enhanced_config, self.pubsub)
@@ -357,7 +360,7 @@ class StrategyManagerEnhanced:
         symbol = strategy.config.pairs[0] if strategy.config.pairs else "BTCUSD"
         
         signal_channel = CHANNELS.STRATEGIES_SIGNAL.format(
-            strategyId=strategy.config.name,
+            strategyId=strategy.config.id,
             symbol=symbol
         )
         

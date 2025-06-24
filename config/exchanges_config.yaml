@@ -1,0 +1,12 @@
+exchanges:
+      kraken_future_spot:
+        # Kraken API Configuration
+        connector_class: KrakenFutureConnector
+        exchange: 'KRAKEN'
+        tick_type: 'spot'
+
+      kraken_future_mark:
+        # Kraken API Configuration
+        connector_class: KrakenFutureConnector
+        exchange: 'KRAKEN'
+        tick_type: 'mark'

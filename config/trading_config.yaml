@@ -14,8 +14,9 @@ sessions:
     killed_at: '2025-06-05T07:27:49.882281+00:00'
     mode: paper
     name: ema grid
-    start_time: '2025-06-05T11:11:06.497578+00:00'
+    start_time: '2025-06-19T12:51:49.795052+00:00'
     status: running
+    stopped_at: '2025-06-19T10:56:39.134825+00:00'
     strategies:
     - ema_grid_test
     workflow_enabled: true
@@ -23,6 +24,7 @@ strategies:
   ema_grid_test:
     created_at: '2025-06-04T08:48:10.951481+00:00'
     end_date: now
+    historic: 200
     id: ema_grid_test
     indicators:
       LONG:
@@ -45,7 +47,7 @@ strategies:
     risk_management:
       RR: 1.5
       max_concurrent_trades: 3
-      name: "Profil par d\xE9faut"
+      name: Profil par defaut
       position_size_value: 2.0
       risk_profil: default
       stop_loss_percent: 2.0
@@ -53,8 +55,9 @@ strategies:
     signal_rules:
       long_condition: SHORT > LONG & SHORT[-1] < LONG[-1]
       short_condition: SHORT < LONG & SHORT[-1] > LONG[-1]
-    start_date: '2025-01-01'
+    start_date: '2025-06-01'
     status: inactive
     symbol: BTCUSDC
-    timeframe: 15m
+    timeframe: 1H
     workflow_enabled: true
+    exchange: 'kraken_future_spot'
