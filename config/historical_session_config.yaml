@@ -1,0 +1,72 @@
+indicators: {}  # Pas d'indicateurs pour cette stratégie simple
+
+risk_profils:
+  simple:
+    max_concurrent_trades: 2
+    name: "Profil Simple Historique"
+    position_size_value: 2.0
+    stop_loss_percent: 2.0
+    take_profit_percent: 0.0  # Pas de take profit fixe
+    trailing_stop: false
+
+sessions:
+  historical_eth_session:
+    created_at: '2025-05-31T15:00:00.000000+00:00'
+    id: historical_eth_session
+    mode: paper
+    name: Historical ETH/USDC Test Session
+    start_time: '2025-05-31T15:00:00.000000+00:00'
+    status: completed
+    strategies:
+    - simple_eth_strategy
+    workflow_enabled: false  # Pas de workflow complexe
+    data_source: kraken_historical
+    pair: ETHUSDC
+    timeframe: 15m
+    historical_start: '2025-05-01T00:00:00.000000+00:00'
+
+strategies:
+  simple_eth_strategy:
+    created_at: '2025-05-31T15:00:00.000000+00:00'
+    current_balance: 9988.47  # Résultat du test historique
+    id: simple_eth_strategy
+    indicators: {}  # Aucun indicateur technique
+    initial_balance: 10000.0
+    name: Simple ETH Historical Strategy
+    parameters:
+      position_size_pct: 2.0
+      max_positions: 2
+      hold_time_max: 3  # Chandelles
+      momentum_threshold: 0.5  # % minimum de variation
+      loss_threshold: -2.0  # % perte maximale avant fermeture
+    performance:
+      # Résultats du test historique ETH/USDC 15m
+      start_time: '2025-05-24T07:15:00.000000+00:00'
+      end_time: '2025-05-31T19:00:00.000000+00:00'
+      total_trades: 27
+      winning_trades: 10
+      losing_trades: 17
+      win_rate: 0.370
+      profit_factor: 0.38
+      max_drawdown: 2.08
+      sharpe_ratio: -0.15
+    risk_management:
+      max_concurrent_trades: 2
+      max_daily_loss: 500.0
+      max_position_size: 0.02
+      position_size_method: percent
+      stop_loss_percent: 2.0
+      take_profit_percent: 0.0  # Gestion manuelle
+    signal_rules:
+      # Stratégie simple sans signaux complexes
+      long_condition: "price_momentum > 0.5% AND volume > 0"
+      short_condition: "hold_time >= 3 OR loss > -2%"
+    status: configured
+    symbol: ETHUSDC
+    timeframe: 15m
+    workflow_enabled: false
+    kraken_config:
+      pair: ETHUSDC
+      interval: 15
+      sandbox: true
+      rate_limit: 20
