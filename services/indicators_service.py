@@ -156,9 +156,9 @@ class TechnicalIndicators:
         required_columns=["close"],
         category="moving_averages"
     )
-    async def simple_moving_average(df: pd.DataFrame, period: int = 20, source= "close", name: str = None) -> pd.DataFrame:
+    async def simple_moving_average(df: pd.DataFrame, period: int = 20, source= "close", indicator: str = None) -> pd.DataFrame:
         """Calcule la moyenne mobile simple"""
-        column_name = name or f"SMA_{period}"
+        column_name = indicator or f"SMA_{period}"
         sma_values = df[source].rolling(window=period).mean()
         return pd.DataFrame({column_name: sma_values})
 
@@ -171,9 +171,9 @@ class TechnicalIndicators:
         required_columns=["close"],
         category="moving_averages"
     )
-    async def exponential_moving_average(df: pd.DataFrame, period: int = 20, source="close", name: str = None) -> pd.DataFrame:
+    async def exponential_moving_average(df: pd.DataFrame, period: int = 20, source="close", indicator: str = None) -> pd.DataFrame:
         """Calcule la moyenne mobile exponentielle"""
-        column_name = name or f"EMA_{period}"
+        column_name = indicator or f"EMA_{period}"
         ema_values = df[source].ewm(span=period).mean()
         return pd.DataFrame({column_name: ema_values})
 
@@ -186,9 +186,9 @@ class TechnicalIndicators:
         required_columns=["close"],
         category="oscillators"
     )
-    async def relative_strength_index(df: pd.DataFrame, period: int = 14, name: str = None) -> pd.DataFrame:
+    async def relative_strength_index(df: pd.DataFrame, period: int = 14, indicator: str = None) -> pd.DataFrame:
         """Calcule le RSI"""
-        column_name = name or f"RSI_{period}"
+        column_name = indicator or f"RSI_{period}"
 
         delta = df['close'].diff()
         gain = delta.where(delta > 0, 0)
@@ -213,9 +213,9 @@ class TechnicalIndicators:
         category="momentum"
     )
     async def macd(df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9,
-             name: str = None) -> pd.DataFrame:
+             indicator: str = None) -> pd.DataFrame:
         """Calcule le MACD (retourne DataFrame avec 3 colonnes)"""
-        base_name = name or "MACD"
+        base_name = indicator or "MACD"
 
         ema_fast = df['close'].ewm(span=fast_period).mean()
         ema_slow = df['close'].ewm(span=slow_period).mean()
@@ -240,9 +240,9 @@ class TechnicalIndicators:
         output_columns=["bb_upper", "bb_middle", "bb_lower"],
         category="volatility"
     )
-    async def bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2, name: str = None) -> pd.DataFrame:
+    async def bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2, indicator: str = None) -> pd.DataFrame:
         """Calcule les Bandes de Bollinger"""
-        base_name = name or f"BB_{period}"
+        base_name = indicator or f"BB_{period}"
 
         sma = df['close'].rolling(window=period).mean()
         std = df['close'].rolling(window=period).std()
@@ -265,9 +265,9 @@ class TechnicalIndicators:
         required_columns=["high", "low", "close"],
         category="volatility"
     )
-    async def average_true_range(df: pd.DataFrame, period: int = 14, name: str = None) -> pd.DataFrame:
+    async def average_true_range(df: pd.DataFrame, period: int = 14, indicator: str = None) -> pd.DataFrame:
         """Calcule l'ATR"""
-        column_name = name or f"ATR_{period}"
+        column_name = indicator or f"ATR_{period}"
 
         high_low = df['high'] - df['low']
         high_close_prev = abs(df['high'] - df['close'].shift(1))
@@ -288,9 +288,9 @@ class TechnicalIndicators:
         output_columns=["stoch_k", "stoch_d"],
         category="oscillators"
     )
-    async def stochastic(df: pd.DataFrame, k_period: int = 14, d_period: int = 3, name: str = None) -> pd.DataFrame:
+    async def stochastic(df: pd.DataFrame, k_period: int = 14, d_period: int = 3, indicator: str = None) -> pd.DataFrame:
         """Calcule le Stochastique"""
-        base_name = name or f"STOCH_{k_period}_{d_period}"
+        base_name = indicator or f"STOCH_{k_period}_{d_period}"
 
         lowest_low = df['low'].rolling(window=k_period).min()
         highest_high = df['high'].rolling(window=k_period).max()

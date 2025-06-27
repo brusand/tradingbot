@@ -9,7 +9,7 @@ import signal
 import sys
 from typing import Optional
 
-from config.settings import settings
+from config import settings
 from data.persistence import DatabaseManager
 from core.session_manager import SessionManager
 from core.strategy_engine import StrategyEngine

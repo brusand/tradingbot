@@ -114,6 +114,10 @@ class TradingCLI:
         # Multi-session (optionnel)
         self.multi_session_manager = None
 
+        # CandlesFetcher avec context manager
+        self.candles_fetcher = None
+        self.candles_fetcher_initialized = False
+
         # Registres de configuration (CLI Adapted)
         self.strategies_registry = {}
         self.indicators_registry = {}
@@ -201,14 +205,18 @@ class TradingCLI:
                 await self.strategy_manager_enhanced.initialize()
 
                 # Créer une instance du connector depuis la config
-                connector_class_name = self.settings.exchange.connector #self.config.get('connector', 'KrakenConnector')
-                if connector_class_name == 'KrakenConnector':
-                    from connectors.KrakenFutureConnector import KrakenFutureConnector
-                    connector = KrakenFutureConnector(api_key= self.settings.exchange.api_key, api_secret = self.settings.exchange.api_secret)
-                else:
-                    raise ValueError(f"Connector non supporté: {connector_class_name}")
+                #connector_class_name = self.settings.exchange.connector #self.config.get('connector', 'KrakenConnector')
+                #if connector_class_name == 'KrakenConnector':
+                #    from connectors.KrakenFutureConnector import KrakenFutureConnector
+                #    connector = KrakenFutureConnector(api_key= self.settings.exchange.api_key, api_secret = self.settings.exchange.api_secret)
+                #else:
+                #    raise ValueError(f"Connector non supporté: {connector_class_name}")
                 
-                self.market_data_service = await get_market_service(self.pubsub, connector)
+                self.market_data_service = await get_market_service(self.pubsub)
+                
+                # Initialiser CandlesFetcher avec context manager
+                await self._initialize_candles_fetcher()
+                
                 self.workflow_running = True
 
             return True
@@ -224,11 +232,97 @@ class TradingCLI:
 
             if self.pubsub:
                 await self.pubsub.stop()
+            
+            # Fermer CandlesFetcher proprement
+            await self._cleanup_candles_fetcher()
 
             self.workflow_running = False
 
         except Exception as e:
             click.echo(f"⚠️ Erreur lors de l'arrêt: {e}")
+
+    async def _initialize_candles_fetcher(self):
+        """Initialise le CandlesFetcher avec context manager"""
+        try:
+            from core.candles_fetcher import CandlesFetcher
+            
+            if self.candles_fetcher is None:
+                # Créer l'instance CandlesFetcher
+                self.candles_fetcher = CandlesFetcher(cache_dir="cache_crypto")
+                click.echo("📊 CandlesFetcher créé")
+            
+            if not self.candles_fetcher_initialized:
+                # Initialiser avec context manager
+                await self.candles_fetcher.__aenter__()
+                self.candles_fetcher_initialized = True
+                click.echo("✅ CandlesFetcher initialisé avec tous les connecteurs")
+                
+        except Exception as e:
+            click.echo(f"❌ Erreur initialisation CandlesFetcher: {e}")
+            self.candles_fetcher = None
+            self.candles_fetcher_initialized = False
+
+    async def _cleanup_candles_fetcher(self):
+        """Nettoie proprement le CandlesFetcher"""
+        try:
+            if self.candles_fetcher_initialized and self.candles_fetcher:
+                await self.candles_fetcher.__aexit__(None, None, None)
+                self.candles_fetcher_initialized = False
+                click.echo("🛑 CandlesFetcher fermé proprement")
+                
+        except Exception as e:
+            click.echo(f"⚠️ Erreur fermeture CandlesFetcher: {e}")
+        finally:
+            self.candles_fetcher = None
+            self.candles_fetcher_initialized = False
+
+    async def get_candles_fetcher(self):
+        """
+        Retourne le CandlesFetcher initialisé, l'initialise si nécessaire
+        
+        Returns:
+            CandlesFetcher: Instance initialisée avec context manager
+        """
+        if not self.candles_fetcher_initialized:
+            await self._initialize_candles_fetcher()
+        
+        if not self.candles_fetcher_initialized:
+            raise RuntimeError("CandlesFetcher non disponible")
+            
+        return self.candles_fetcher
+
+    async def fetch_candles_safely(self, exchange: str, pair: str, interval: str, 
+                                   start_date: str = None, end_date: str = None, 
+                                   historic: int = 200):
+        """
+        Méthode utilitaire pour récupérer des chandelles de manière sécurisée
+        
+        Args:
+            exchange: Exchange à utiliser
+            pair: Paire de trading
+            interval: Timeframe
+            start_date: Date de début
+            end_date: Date de fin
+            historic: Nombre de chandelles historiques
+            
+        Returns:
+            Dict: Données de chandelles ou None si erreur
+        """
+        try:
+            fetcher = await self.get_candles_fetcher()
+            
+            return await fetcher.get_candles_range(
+                exchange=exchange,
+                pair=pair,
+                interval=interval,
+                start_date=start_date or "2025-01-01",
+                end_date=end_date or "now",
+                historic=historic
+            )
+            
+        except Exception as e:
+            click.echo(f"❌ Erreur récupération chandelles: {e}")
+            return None
 
     def convert_to_enhanced_config(self, strategy_data: dict) -> 'EnhancedStrategyConfig':
         """Convertit stratégie du registre vers EnhancedStrategyConfig"""
@@ -244,6 +338,8 @@ class TradingCLI:
             start_date=strategy_data.get('start_date', '2025-01-01 00:00:00'),
             end_date=strategy_data.get('end_date', 'now'),
             historic=strategy_data.get('historic', 200),
+            exchange=strategy_data.get('exchange', ''),
+            max_dataframe_size=strategy_data.get('max_dataframe_size', 500),
             risk_config=None,
             initial_balance=strategy_data.get('initial_balance', 100.0),
             current_balance=strategy_data.get('current_balance')
@@ -562,6 +658,87 @@ def system_metrics(ctx, export):
 
 
 # ============================================================================
+# COMMANDES TEST CandlesFetcher
+# ============================================================================
+
+@cli.group()
+def test():
+    """🧪 Commandes de test pour le système de trading"""
+    pass
+
+
+@test.command('fetch-candles')
+@click.option('--exchange', default='kraken_future_spot', help='Exchange à utiliser')
+@click.option('--pair', default='BTCUSD', help='Paire de trading')
+@click.option('--interval', default='5m', help='Timeframe')
+@click.option('--start-date', default='2025-01-01', help='Date de début')
+@click.option('--end-date', default='now', help='Date de fin')
+@click.option('--historic', default=200, type=int, help='Nombre de chandelles historiques')
+@click.pass_context
+@trace_decorator
+def fetch_candles_command(ctx, exchange, pair, interval, start_date, end_date, historic):
+    """Test de récupération de chandelles avec CandlesFetcher"""
+    trading_cli = ctx.obj['cli']
+
+    async def _fetch_candles():
+        try:
+            click.echo(f"🔄 Test CandlesFetcher: {exchange} {pair} {interval}")
+            click.echo(f"📊 Période: {start_date} -> {end_date} ({historic} chandelles)")
+            
+            # Initialiser le système si nécessaire
+            if not trading_cli.candles_fetcher_initialized:
+                await trading_cli.initialize_system()
+            
+            # Tester la récupération de chandelles
+            result = await trading_cli.fetch_candles_safely(
+                exchange=exchange,
+                pair=pair,
+                interval=interval,
+                start_date=start_date,
+                end_date=end_date,
+                historic=historic
+            )
+            
+            if result:
+                candles = result.get('candles', [])
+                click.echo(f"✅ Récupération réussie: {len(candles)} chandelles")
+                
+                if candles:
+                    first_candle = candles[0]
+                    last_candle = candles[-1]
+                    
+                    click.echo(f"📈 Première chandelle: {first_candle.get('timestamp')} - Close: {first_candle.get('close')}")
+                    click.echo(f"📈 Dernière chandelle: {last_candle.get('timestamp')} - Close: {last_candle.get('close')}")
+                else:
+                    click.echo("⚠️ Aucune chandelle dans le résultat")
+            else:
+                click.echo("❌ Échec de la récupération des chandelles")
+            
+            # Test de validation du cache si des données ont été récupérées
+            if result and trading_cli.candles_fetcher:
+                click.echo("\n🔍 Validation du cache...")
+                try:
+                    # Obtenir les informations du cache
+                    cache_info = trading_cli.candles_fetcher.get_cache_validation(
+                        f"{exchange}_{pair}_{interval}.feather",
+                        result.get('dataframe', pd.DataFrame())
+                    )
+                    click.echo(f"✅ Cache validé: {cache_info}")
+                except Exception as e:
+                    click.echo(f"⚠️ Erreur validation cache: {e}")
+            
+        except Exception as e:
+            click.echo(f"💥 Erreur lors du test: {e}")
+            import traceback
+            click.echo(f"Traceback: {traceback.format_exc()}")
+        finally:
+            # Nettoyer proprement
+            await trading_cli.shutdown_system()
+
+    asyncio.run(_fetch_candles())
+
+
+# ============================================================================
 # COMMANDES SESSIONS (Fusion CLI de base + V2 + Adapted)
 # ============================================================================
 
@@ -730,19 +907,21 @@ def start_session(ctx, session_id, force):
                         strategy_data = trading_cli.strategies_registry[strategy_id]
                         enhanced_config = trading_cli.convert_to_enhanced_config(strategy_data)
 
-                        base_config = StrategyConfig(
-                            id = enhanced_config.id,
-                            name=enhanced_config.name,
-                            parameters=enhanced_config.parameters,
-                            timeframe=enhanced_config.timeframe,
-                            pairs=enhanced_config.pairs,
-                            start_date=enhanced_config.start_date,
-                            end_date=enhanced_config.end_date,
-                            historic= enhanced_config.historic
-                        )
+                        #enhanced_config = StrategyConfig(
+                        #    id = enhanced_config.id,
+                        #    name=enhanced_config.name,
+                        #    parameters=enhanced_config.parameters,
+                        #    timeframe=enhanced_config.timeframe,
+                        #    pairs=enhanced_config.pairs,
+                        #    start_date=enhanced_config.start_date,
+                        #    end_date=enhanced_config.end_date,
+                        #    exchange=enhanced_config.exchange,
+                        #    max_dataframe_size=enhanced_config.max_dataframe_size,
+                        #    historic= enhanced_config.historic
+                        #)
 
                         success = await trading_cli.strategy_manager_enhanced.start_strategy(
-                            strategy_id, base_config
+                            strategy_id, enhanced_config
                         )
                         if success:
                             success_count += 1
@@ -757,22 +936,13 @@ def start_session(ctx, session_id, force):
                 # Garder l'event loop actif pour permettre aux tâches asyncio de s'exécuter
                 click.echo("⏳ Services démarrés. Appuyez sur Ctrl+C pour arrêter...")
                 
-                # Installer un handler pour SIGINT/SIGTERM pour arrêt propre
-                import signal
-                shutdown_event = asyncio.Event()
-                
-                def signal_handler(signum, frame):
-                    click.echo(f"\n🛑 Signal {signum} reçu, arrêt en cours...")
-                    shutdown_event.set()
-                
-                signal.signal(signal.SIGINT, signal_handler)
-                signal.signal(signal.SIGTERM, signal_handler)
-                
-                # Attendre le signal d'arrêt ou timeout
+                # Attente simple avec gestion KeyboardInterrupt
                 try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=300)  # 5 minutes max
-                except asyncio.TimeoutError:
-                    click.echo("⏰ Timeout atteint, arrêt automatique...")
+                    # Garder le service actif jusqu'à interruption
+                    while True:
+                        await asyncio.sleep(1)
+                except KeyboardInterrupt:
+                    click.echo("\n🛑 Interruption détectée, arrêt en cours...")
                 
                 # Arrêt propre
                 click.echo("🛑 Arrêt des services...")
@@ -794,13 +964,95 @@ def start_session(ctx, session_id, force):
         except Exception as e:
             click.echo(f"❌ Erreur lors du démarrage: {e}")
 
-    # Créer une tâche dans l'event loop existant au lieu d'asyncio.run
-    try:
-        loop = asyncio.get_running_loop()
-        asyncio.create_task(_start())
-    except RuntimeError:
-        # Pas d'event loop en cours, en créer un
-        asyncio.run(_start())
+    # Utiliser asyncio.run dans tous les cas pour simplicité et fiabilité
+    asyncio.run(_start())
+
+
+@session.command('open')
+@click.argument('session_id')
+@click.option('--force', is_flag=True, help='Forcer l\'ouverture')
+@click.pass_context
+@smart_resolve_params(session_id='session')
+@trace_decorator
+def open_session(ctx, session_id, force):
+    """📂 Ouvrir une session existante depuis la dernière sauvegarde DataFrame - utilise la recherche intelligente"""
+    trading_cli = ctx.obj['cli']
+
+    async def _open():
+
+        session = trading_cli.sessions_registry[session_id]
+
+        try:
+            # Ouvrir session workflow si activé
+            if session.get('workflow_enabled') and WORKFLOW_AVAILABLE:
+                if not trading_cli.workflow_running:
+                    await trading_cli.initialize_system()
+
+                # Démarrer les stratégies en mode "open" (chargement depuis cache)
+                success_count = 0
+                for strategy_id in session.get('strategies', []):
+                    if strategy_id in trading_cli.strategies_registry:
+                        strategy_data = trading_cli.strategies_registry[strategy_id]
+                        enhanced_config = trading_cli.convert_to_enhanced_config(strategy_data)
+
+                        # Utiliser la méthode open_strategy au lieu de start_strategy
+                        if hasattr(trading_cli.strategy_manager_enhanced, 'open_strategy'):
+                            success = await trading_cli.strategy_manager_enhanced.open_strategy(
+                                strategy_id, enhanced_config
+                            )
+                        else:
+                            # Fallback: start with cache loading
+                            success = await trading_cli.strategy_manager_enhanced.start_strategy(
+                                strategy_id, enhanced_config, load_from_cache=True
+                            )
+                        
+                        if success:
+                            success_count += 1
+
+                session['status'] = 'running'
+                session['start_time'] = datetime.now(timezone.utc).isoformat()
+                trading_cli._save_configuration()
+
+                click.echo(f"📂 Session workflow '{session['name']}' ouverte depuis cache")
+                click.echo(f"📊 {success_count} stratégies reprises depuis la dernière sauvegarde")
+                
+                # Garder l'event loop actif pour permettre aux tâches asyncio de s'exécuter
+                click.echo("⏳ Services démarrés. Appuyez sur Ctrl+C pour arrêter...")
+                
+                # Attente simple avec gestion KeyboardInterrupt
+                try:
+                    # Garder le service actif jusqu'à interruption
+                    while True:
+                        await asyncio.sleep(1)
+                except KeyboardInterrupt:
+                    click.echo("\n🛑 Interruption détectée, arrêt en cours...")
+                
+                # Arrêt propre
+                click.echo("🛑 Arrêt des services...")
+                await trading_cli.shutdown_system()
+                click.echo("✅ Services arrêtés proprement")
+
+            else:
+                # Démarrage standard (non supporté pour open - fallback vers start)
+                click.echo("⚠️ Mode 'open' disponible uniquement pour les sessions workflow")
+                click.echo("💡 Utilisez 'session start' pour les sessions standard")
+                
+                if click.confirm("Voulez-vous démarrer la session en mode standard?"):
+                    if not trading_cli.session_manager:
+                        await trading_cli.initialize_system()
+
+                    await trading_cli.session_manager.start_session(session_id)
+                    session['status'] = 'running'
+                    session['start_time'] = datetime.now(timezone.utc).isoformat()
+                    trading_cli._save_configuration()
+
+                    click.echo(f"✅ Session '{session['name']}' démarrée en mode standard")
+
+        except Exception as e:
+            click.echo(f"❌ Erreur lors de l'ouverture: {e}")
+
+    # Utiliser asyncio.run dans tous les cas pour simplicité et fiabilité
+    asyncio.run(_open())
 
 
 @session.command('show')
@@ -1058,12 +1310,8 @@ def stop_session(ctx, session_id, force):
         if stopped_strategies > 0:
             click.echo(f"🛑 {stopped_strategies} stratégie(s) arrêtée(s)")
 
-    # Exécuter l'arrêt de manière asynchrone
-    try:
-        loop = asyncio.get_running_loop()
-        asyncio.create_task(_stop())
-    except RuntimeError:
-        asyncio.run(_stop())
+    # Utiliser asyncio.run dans tous les cas pour simplicité et fiabilité
+    asyncio.run(_stop())
 
 
 @session.command('kill')
@@ -2941,6 +3189,373 @@ def indicators_list(ctx, category, output_format):
 
 
 # ============================================================================
+# COMMANDES SYSTÈME
+# ============================================================================
+
+@cli.group()
+def system():
+    """🔧 Gestion du système de trading"""
+    pass
+
+
+@system.command('start')
+@click.pass_context
+@trace_decorator
+def system_start(ctx):
+    """Démarrer tous les services du système"""
+    trading_cli = ctx.obj['cli']
+    
+    async def _start_system():
+        try:
+            click.echo("🚀 Démarrage du système de trading...")
+            
+            success = await trading_cli.initialize_system()
+            
+            if success:
+                click.echo("✅ Système démarré avec succès")
+                click.echo("📊 Services actifs:")
+                if trading_cli.pubsub:
+                    click.echo("  • PubSub Engine: ✅")
+                if trading_cli.strategy_manager_enhanced:
+                    click.echo("  • Strategy Manager: ✅") 
+                if trading_cli.candles_fetcher_initialized:
+                    click.echo("  • CandlesFetcher: ✅")
+                if trading_cli.market_data_service:
+                    click.echo("  • Market Data Service: ✅")
+            else:
+                click.echo("❌ Échec du démarrage du système")
+                
+        except Exception as e:
+            click.echo(f"❌ Erreur lors du démarrage: {e}")
+    
+    asyncio.run(_start_system())
+
+
+@system.command('stop')
+@click.pass_context
+@trace_decorator
+def system_stop(ctx):
+    """Arrêter tous les services du système"""
+    trading_cli = ctx.obj['cli']
+    
+    async def _stop_system():
+        try:
+            click.echo("🛑 Arrêt du système de trading...")
+            
+            # Arrêter les services dans l'ordre inverse
+            if trading_cli.strategy_manager_enhanced:
+                click.echo("🛑 Arrêt du Strategy Manager...")
+                await trading_cli.strategy_manager_enhanced.shutdown()
+                
+            if trading_cli.market_data_service:
+                click.echo("🛑 Arrêt du Market Data Service...")
+                await trading_cli.market_data_service.stop()
+                
+            # Arrêter le PubSub Engine (c'est le point clé !)
+            if trading_cli.pubsub:
+                click.echo("🛑 Arrêt du PubSub Engine...")
+                await trading_cli.pubsub.stop()
+                
+            # Arrêter le système complet
+            await trading_cli.shutdown_system()
+            
+            click.echo("✅ Système arrêté proprement")
+            click.echo("🧹 Tous les workers et tâches ont été terminés")
+                
+        except Exception as e:
+            click.echo(f"❌ Erreur lors de l'arrêt: {e}")
+    
+    asyncio.run(_stop_system())
+
+
+@system.command('status')
+@click.pass_context
+@trace_decorator  
+def system_status(ctx):
+    """Afficher le statut du système"""
+    trading_cli = ctx.obj['cli']
+    
+    click.echo("📊 STATUT DU SYSTÈME")
+    click.echo("=" * 40)
+    
+    # Vérifier l'état des services
+    services_status = []
+    
+    if trading_cli.pubsub:
+        status = "🟢 Actif" if trading_cli.pubsub.is_running else "🔴 Arrêté"
+        services_status.append(f"PubSub Engine: {status}")
+    else:
+        services_status.append("PubSub Engine: ❌ Non initialisé")
+        
+    if trading_cli.strategy_manager_enhanced:
+        services_status.append("Strategy Manager: 🟢 Actif")
+    else:
+        services_status.append("Strategy Manager: ❌ Non initialisé")
+        
+    if trading_cli.candles_fetcher_initialized:
+        services_status.append("CandlesFetcher: 🟢 Actif")
+    else:
+        services_status.append("CandlesFetcher: ❌ Non initialisé")
+        
+    if trading_cli.market_data_service:
+        status = "🟢 Actif" if trading_cli.market_data_service.is_running else "🔴 Arrêté"
+        services_status.append(f"Market Data Service: {status}")
+    else:
+        services_status.append("Market Data Service: ❌ Non initialisé")
+    
+    for status in services_status:
+        click.echo(f"  {status}")
+    
+    # Statistiques PubSub si disponible
+    if trading_cli.pubsub and trading_cli.pubsub.is_running:
+        stats = trading_cli.pubsub.get_stats()
+        click.echo("\n📈 Statistiques PubSub:")
+        click.echo(f"  Messages publiés: {stats.get('messages_published', 0)}")
+        click.echo(f"  Messages livrés: {stats.get('messages_delivered', 0)}")
+        click.echo(f"  Canaux actifs: {stats.get('channels_count', 0)}")
+        click.echo(f"  Abonnés: {stats.get('subscribers_count', 0)}")
+
+
+@system.command('cleanup')
+@click.option('--force', is_flag=True, help='Forcer le nettoyage sans confirmation')
+@click.pass_context
+@trace_decorator
+def system_cleanup(ctx, force):
+    """🧹 Nettoyer les workers orphelins et processus bloqués"""
+    trading_cli = ctx.obj['cli']
+    
+    async def _cleanup_system():
+        try:
+            click.echo("🧹 Nettoyage des workers orphelins...")
+            
+            cleanup_actions = []
+            
+            # 1. Vérifier et nettoyer le strategy manager
+            if trading_cli.strategy_manager_enhanced:
+                active_strategies = trading_cli.strategy_manager_enhanced.get_active_strategies()
+                all_instances = trading_cli.strategy_manager_enhanced.get_all_strategy_instances()
+                
+                click.echo(f"🔍 {len(active_strategies)} stratégies actives détectées")
+                click.echo(f"🔍 {len(all_instances)} instances totales dans le registre global")
+                
+                if active_strategies:
+                    click.echo("Stratégies actives:")
+                    for strategy_id in active_strategies:
+                        click.echo(f"  • {strategy_id}")
+                        cleanup_actions.append(f"Arrêter la stratégie active '{strategy_id}'")
+                
+                if all_instances:
+                    click.echo("Toutes les instances:")
+                    for strategy_id, strategy in all_instances.items():
+                        worker_status = "running" if (hasattr(strategy, 'candle_processor_task') and 
+                                                    strategy.candle_processor_task and 
+                                                    not strategy.candle_processor_task.done()) else "stopped"
+                        click.echo(f"  • {strategy_id} (worker: {worker_status})")
+                        if worker_status == "running":
+                            cleanup_actions.append(f"Forcer l'arrêt de l'instance '{strategy_id}'")
+                
+                if not active_strategies and not all_instances:
+                    click.echo("✅ Aucune stratégie dans le Strategy Manager")
+            
+            # 2. Vérifier les tâches asyncio en cours
+            try:
+                import asyncio
+                current_tasks = [task for task in asyncio.all_tasks() if not task.done()]
+                running_tasks = []
+                all_task_info = []
+                
+                click.echo(f"🔍 Analyse de {len(current_tasks)} tâches asyncio actives:")
+                
+                for task in current_tasks:
+                    task_name = getattr(task, 'get_name', lambda: str(task))()
+                    task_repr = repr(task)
+                    
+                    # Critères plus larges pour détecter les tâches suspectes
+                    is_suspicious = (
+                        'candle_processor' in task_name.lower() or
+                        'strategy' in task_name.lower() or
+                        '_candle_processor_worker' in task_repr or
+                        'EMA Grid Test' in task_repr or
+                        'strategy_workflow' in task_repr
+                    )
+                    
+                    task_info = f"{task_name} | {task_repr[:100]}..."
+                    all_task_info.append(task_info)
+                    
+                    if is_suspicious:
+                        running_tasks.append((task, task_name, task_repr))
+                        cleanup_actions.append(f"Annuler la tâche suspecte '{task_name}'")
+                
+                # Afficher toutes les tâches pour diagnostic
+                for i, task_info in enumerate(all_task_info[:10]):  # Limiter à 10 pour la lisibilité
+                    click.echo(f"  [{i+1}] {task_info}")
+                if len(all_task_info) > 10:
+                    click.echo(f"  ... et {len(all_task_info) - 10} autres tâches")
+                
+                if running_tasks:
+                    click.echo(f"\n🚨 {len(running_tasks)} tâches suspectes identifiées:")
+                    for task, task_name, task_repr in running_tasks:
+                        click.echo(f"  • {task_name}")
+                        click.echo(f"    Détails: {task_repr[:150]}...")
+                else:
+                    click.echo("✅ Aucune tâche suspecte détectée par les critères normaux")
+                    
+                    # Recherche plus agressive si aucune tâche suspecte trouvée
+                    click.echo("🔍 Recherche agressive de workers orphelins...")
+                    for task in current_tasks:
+                        task_repr = repr(task)
+                        task_name = getattr(task, 'get_name', lambda: 'unknown')()
+                        
+                        # Rechercher spécifiquement les patterns de logs qu'on voit pour le phantom worker
+                        is_phantom_worker = (
+                            'Queue empty' in task_repr or 
+                            'EMA Grid Test' in task_repr or
+                            '📈 Queue empty' in task_repr or
+                            'strategy_workflow' in task_repr or
+                            '_on_queue_empty' in task_repr or
+                            '_candle_processor_worker' in task_repr or
+                            'pubsub' in task_repr.lower() or
+                            'publish' in task_repr.lower()
+                        )
+                        
+                        if is_phantom_worker:
+                            running_tasks.append((task, "phantom_worker", task_repr))
+                            cleanup_actions.append(f"Annuler worker phantom: {task_repr[:50]}...")
+                            click.echo(f"  🎯 Worker phantom détecté: {task_name}")
+                            click.echo(f"     Détails: {task_repr[:120]}...")
+                            
+                            # Essai d'identification de la source du phantom
+                            if hasattr(task, '_callbacks') and task._callbacks:
+                                click.echo(f"     Callbacks: {len(task._callbacks)} actifs")
+                            if hasattr(task, '_state'):
+                                click.echo(f"     État: {task._state}")
+                    
+                    # Aussi rechercher dans les instances d'objets qui persistent
+                    if hasattr(trading_cli, 'strategy_manager_enhanced') and trading_cli.strategy_manager_enhanced:
+                        all_instances = trading_cli.strategy_manager_enhanced.get_all_strategy_instances()
+                        if all_instances:
+                            click.echo(f"🎯 Vérification de {len(all_instances)} instances de stratégies persistantes:")
+                            for session_id, strategy in all_instances.items():
+                                if hasattr(strategy, 'config') and strategy.config.name == 'EMA Grid Test':
+                                    click.echo(f"  🔍 Instance EMA Grid Test trouvée: {session_id}")
+                                    click.echo(f"     is_running: {getattr(strategy, 'is_running', 'N/A')}")
+                                    click.echo(f"     _stopping: {getattr(strategy, '_stopping', 'N/A')}")
+                                    click.echo(f"     worker task: {getattr(strategy, 'candle_processor_task', 'N/A')}")
+                                    running_tasks.append((None, f"strategy_instance_{session_id}", str(strategy)))
+                                    cleanup_actions.append(f"Force stop instance: {session_id}")
+                
+            except Exception as e:
+                click.echo(f"⚠️ Erreur lors de la vérification des tâches: {e}")
+            
+            # 3. Forcer l'arrêt si nécessaire
+            if cleanup_actions:
+                if not force:
+                    click.echo(f"\n🚨 Actions de nettoyage nécessaires:")
+                    for action in cleanup_actions:
+                        click.echo(f"  • {action}")
+                    
+                    if not click.confirm("\n⚠️ Procéder au nettoyage forcé?"):
+                        click.echo("❌ Nettoyage annulé")
+                        return
+                
+                click.echo("\n🧹 Nettoyage forcé en cours...")
+                
+                # Force cleanup de toutes les instances de stratégies
+                if trading_cli.strategy_manager_enhanced:
+                    try:
+                        cleanup_count = await trading_cli.strategy_manager_enhanced.force_cleanup_all_strategies()
+                        click.echo(f"🗑️ {cleanup_count} instances de stratégies nettoyées")
+                    except Exception as e:
+                        click.echo(f"⚠️ Erreur lors du nettoyage des stratégies: {e}")
+                        
+                        # Fallback vers l'ancien système
+                        for strategy_id in list(trading_cli.strategy_manager_enhanced.get_active_strategies()):
+                            try:
+                                click.echo(f"🛑 Arrêt forcé de {strategy_id}...")
+                                await trading_cli.strategy_manager_enhanced.stop_strategy(strategy_id)
+                            except Exception as e:
+                                click.echo(f"⚠️ Erreur arrêt {strategy_id}: {e}")
+                
+                # Annuler toutes les tâches suspectes identifiées
+                try:
+                    cancelled_count = 0
+                    
+                    # Recherche et annulation agressive de toutes les tâches suspectes
+                    current_tasks = [task for task in asyncio.all_tasks() if not task.done()]
+                    processed_tasks = set()
+                    
+                    for task in current_tasks:
+                        if task in processed_tasks:
+                            continue
+                            
+                        task_name = getattr(task, 'get_name', lambda: str(task))()
+                        task_repr = repr(task)
+                        
+                        # Critères très larges pour les tâches suspectes avec focus sur phantom workers
+                        is_suspicious = (
+                            'candle_processor' in task_name.lower() or 
+                            'strategy' in task_name.lower() or
+                            '_candle_processor_worker' in task_repr or
+                            'EMA Grid Test' in task_repr or
+                            'strategy_workflow' in task_repr or
+                            'Queue empty' in task_repr or
+                            '📈 Queue empty' in task_repr or
+                            '_on_queue_empty' in task_repr or
+                            'pubsub' in task_repr.lower()
+                        )
+                        
+                        # Critères spécifiques pour phantom workers persistants
+                        is_phantom_specific = (
+                            ('Queue empty for EMA Grid Test' in task_repr) or
+                            ('📈 Queue empty for EMA Grid Test' in task_repr) or
+                            ('EMA Grid Test' in task_repr and '_on_queue_empty' in task_repr)
+                        )
+                        
+                        if is_suspicious or is_phantom_specific:
+                            try:
+                                if is_phantom_specific:
+                                    click.echo(f"🎯 PHANTOM WORKER DÉTECTÉ: {task_name}")
+                                    click.echo(f"   🚨 Pattern spécifique EMA Grid Test détecté")
+                                else:
+                                    click.echo(f"🗑️ Annulation tâche suspecte: {task_name}")
+                                click.echo(f"   Détails: {task_repr[:100]}...")
+                                task.cancel()
+                                cancelled_count += 1
+                                processed_tasks.add(task)
+                            except Exception as e:
+                                click.echo(f"⚠️ Erreur annulation {task_name}: {e}")
+                    
+                    if cancelled_count > 0:
+                        click.echo(f"🗑️ Total: {cancelled_count} tâches annulées")
+                        # Attendre un peu pour laisser les tâches se terminer
+                        await asyncio.sleep(2.0)
+                        
+                        # Vérifier si des tâches persistent
+                        remaining_tasks = [task for task in asyncio.all_tasks() if not task.done()]
+                        click.echo(f"📊 {len(remaining_tasks)} tâches restantes après nettoyage")
+                    else:
+                        click.echo("ℹ️ Aucune tâche à annuler")
+                
+                except Exception as e:
+                    click.echo(f"⚠️ Erreur lors de l'annulation des tâches: {e}")
+                
+                # Arrêt complet du système pour forcer le nettoyage
+                click.echo("🛑 Arrêt complet du système...")
+                await trading_cli.shutdown_system()
+                
+                click.echo("✅ Nettoyage terminé")
+                click.echo("💡 Redémarrez le système avec 'system start' si nécessaire")
+                
+            else:
+                click.echo("✅ Aucun nettoyage nécessaire - système propre")
+                
+        except Exception as e:
+            click.echo(f"❌ Erreur lors du nettoyage: {e}")
+    
+    asyncio.run(_cleanup_system())
+
+
+# ============================================================================
 # COMMANDES UTILITAIRES
 # ============================================================================
 
@@ -2999,6 +3614,68 @@ def version():
     click.echo(f"  Multi-session: {'✅' if MULTI_SESSION_AVAILABLE else '❌'}")
     click.echo(f"  Analytics: ✅")
     click.echo(f"  Configuration YAML: ✅")
+
+
+@cli.command('fetch-candles')
+@click.option('--exchange', default='kraken_future_spot', help='Exchange à utiliser')
+@click.option('--pair', default='XBTUSD', help='Paire de trading')
+@click.option('--interval', default='1h', help='Timeframe')
+@click.option('--start-date', default='2025-01-01', help='Date de début')
+@click.option('--end-date', default='now', help='Date de fin')
+@click.option('--historic', default=200, type=int, help='Nombre de chandelles historiques')
+@click.pass_context
+@trace_decorator
+def fetch_candles_command(ctx, exchange, pair, interval, start_date, end_date, historic):
+    """Tester la récupération de chandelles avec CandlesFetcher"""
+    trading_cli = ctx.obj['cli']
+    
+    async def _fetch_candles():
+        try:
+            click.echo(f"🚀 Initialisation du système...")
+            await trading_cli.initialize_system()
+            
+            click.echo(f"📊 Récupération des chandelles:")
+            click.echo(f"  Exchange: {exchange}")
+            click.echo(f"  Paire: {pair}")
+            click.echo(f"  Interval: {interval}")
+            click.echo(f"  Période: {start_date} → {end_date}")
+            click.echo(f"  Historique: {historic}")
+            
+            # Utiliser la méthode sécurisée
+            result = await trading_cli.fetch_candles_safely(
+                exchange=exchange,
+                pair=pair,
+                interval=interval,
+                start_date=start_date,
+                end_date=end_date,
+                historic=historic
+            )
+            
+            if result:
+                historic_count = len(result.get('historic', []))
+                main_count = len(result.get('candles', []))
+                
+                click.echo(f"\n✅ Résultats:")
+                click.echo(f"  📈 Chandelles historiques: {historic_count}")
+                click.echo(f"  📊 Chandelles principales: {main_count}")
+                click.echo(f"  🎯 Total: {historic_count + main_count}")
+                
+                # Afficher quelques échantillons
+                if result.get('candles'):
+                    sample = result['candles'][:3]
+                    click.echo(f"\n📋 Échantillon (3 premières):")
+                    for i, candle in enumerate(sample):
+                        click.echo(f"  {i+1}. {candle.get('timestamp')} - O:{candle.get('open')} H:{candle.get('high')} L:{candle.get('low')} C:{candle.get('close')}")
+            else:
+                click.echo("❌ Aucune donnée récupérée")
+                
+        except Exception as e:
+            click.echo(f"💥 Erreur: {e}")
+        finally:
+            click.echo(f"🛑 Arrêt du système...")
+            await trading_cli.shutdown_system()
+    
+    asyncio.run(_fetch_candles())
 
 
 @cli.command('init')
@@ -3081,5 +3758,161 @@ def init_system(ctx, force):
     click.echo("🚀 Utilisez 'test workflow' pour tester le système")
 
 
+async def main():
+    """
+    Fonction main simplifiée pour exécuter des commandes CLI de manière asynchrone
+    
+    Usage:
+        python trading_cli.py <commande> [arguments]
+        
+    Examples:
+        python trading_cli.py session list
+        python trading_cli.py strategy list
+        python trading_cli.py test workflow --duration 30
+    """
+    try:
+        # Exécution simple de la commande CLI
+        return await run_cli_command()
+    
+    except KeyboardInterrupt:
+        click.echo("\n🛑 Interruption par l'utilisateur")
+        return 130
+    except Exception as e:
+        click.echo(f"💥 Erreur fatale: {e}")
+        return 1
+
+
+async def run_cli_command():
+    """
+    Exécute la commande CLI dans un contexte asynchrone
+    
+    Returns:
+        int: Code de retour de la commande (0 = succès, autre = erreur)
+    """
+    try:
+        # Créer un contexte Click pour exécution asynchrone
+        ctx = cli.make_context('trading_cli', sys.argv[1:])
+        
+        # Vérifier si la commande nécessite une exécution asynchrone
+        if requires_async_execution(ctx.info_name):
+            click.echo(f"🚀 Exécution asynchrone de '{ctx.info_name}'")
+            
+            # Exécuter la commande avec support asynchrone
+            with ctx:
+                await execute_async_command(ctx)
+        else:
+            # Exécution synchrone standard
+            click.echo(f"⚡ Exécution synchrone de '{ctx.info_name}'")
+            cli()
+        
+        return 0
+    
+    except click.ClickException as e:
+        e.show()
+        return e.exit_code
+    except Exception as e:
+        click.echo(f"❌ Erreur d'exécution: {e}")
+        return 1
+
+
+def requires_async_execution(command_name: str) -> bool:
+    """
+    Détermine si une commande nécessite une exécution asynchrone
+    
+    Args:
+        command_name: Nom de la commande
+        
+    Returns:
+        bool: True si la commande doit être exécutée de manière asynchrone
+    """
+    async_commands = {
+        'session': ['start'],  # Seulement session start a besoin d'async pour le workflow monitoring
+        'test': ['fetch-candles'],  # Seulement fetch-candles a besoin d'async
+        'system': ['start', 'stop'],  # Commandes système pour gérer les services
+    }
+    
+    if not command_name:
+        return False
+    
+    # Vérifier si c'est une commande qui nécessite asyncio
+    for group, subcommands in async_commands.items():
+        if command_name.startswith(group):
+            return True
+    
+    return False
+
+
+async def execute_async_command(ctx):
+    """
+    Exécute une commande spécifique avec support asynchrone
+    
+    Args:
+        ctx: Contexte Click de la commande
+    """
+    try:
+        # Récupérer les arguments et options
+        args = ctx.params
+        command_path = ctx.info_name
+        
+        click.echo(f"📋 Commande: {command_path}")
+        click.echo(f"🔧 Arguments: {args}")
+        
+        # Créer un nouvel event loop si nécessaire
+        loop = asyncio.get_running_loop()
+        click.echo(f"🔄 Event loop actif: {loop}")
+        
+        # Exécuter la commande dans l'event loop existant
+        # Note: Ici vous pouvez ajouter la logique spécifique pour chaque commande
+        if command_path.startswith('session'):
+            await handle_session_command(ctx, args)
+        elif command_path.startswith('test'):
+            await handle_test_command(ctx, args)
+        elif command_path.startswith('system'):
+            await handle_system_command(ctx, args)
+        else:
+            # Fallback vers exécution synchrone
+            cli.main(sys.argv[1:], standalone_mode=False)
+    
+    except Exception as e:
+        click.echo(f"💥 Erreur dans execute_async_command: {e}")
+        raise
+
+
+async def handle_session_command(ctx, args):
+    """Gestionnaire pour commandes session asynchrones"""
+    click.echo("🎯 Traitement commande session (mode asynchrone)")
+    # Ici vous pouvez ajouter la logique spécifique pour les sessions
+    # Pour l'instant, déléguer à l'exécution standard
+    cli.main(sys.argv[1:], standalone_mode=False)
+
+
+async def handle_test_command(ctx, args):
+    """Gestionnaire pour commandes test asynchrones"""
+    click.echo("🧪 Traitement commande test (mode asynchrone)")
+    # Ici vous pouvez ajouter la logique spécifique pour les tests
+    cli.main(sys.argv[1:], standalone_mode=False)
+
+
+async def handle_system_command(ctx, args):
+    """Gestionnaire pour commandes system asynchrones"""
+    click.echo("🔧 Traitement commande system (mode asynchrone)")
+    # Ici vous pouvez ajouter la logique spécifique pour le système
+    cli.main(sys.argv[1:], standalone_mode=False)
+
+
 if __name__ == '__main__':
-    cli()
+    # Vérifier si on doit utiliser l'event loop asynchrone ou l'exécution standard
+    if len(sys.argv) > 1 and requires_async_execution(' '.join(sys.argv[1:])):
+        # Exécution asynchrone avec event loop
+        try:
+            exit_code = asyncio.run(main())
+            sys.exit(exit_code)
+        except KeyboardInterrupt:
+            click.echo("\n🛑 Interruption par utilisateur")
+            sys.exit(130)
+        except Exception as e:
+            click.echo(f"💥 Erreur fatale: {e}")
+            sys.exit(1)
+    else:
+        # Exécution synchrone standard pour compatibilité
+        cli()

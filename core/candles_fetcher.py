@@ -752,7 +752,7 @@ class CandlesFetcher:
         
         # Retourner selon le format demandé
         return {
-            'historic': historic_candles,
+            'historic': historic_candles[:-1],
             'candles': main_candles
         }
 
@@ -1232,9 +1232,9 @@ async def exemple_utilisation():
             interval='1h',
             start_date='2025-01-01',
             end_date='now',
-            historic=0
+            historic=2
         )
-        logger.info(f"✅ Récupéré: {len(result_with_historic['candles'])} chandelles 1h")
+        logger.info(f"✅ Récupéré: {len(result_with_historic['candles'])}  chandelles with historic {len(result_with_historic['historic'])} 1h")
         historic_count = len(result_with_historic['historic'])
         main_count = len(result_with_historic['candles'])
         

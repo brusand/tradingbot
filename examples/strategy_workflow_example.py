@@ -34,7 +34,7 @@ class MockStrategyConfig:
         self.name = "EMA_RSI_Strategy"
         self.pairs = ["BTCUSD"]
         self.timeframe = "5m"
-        self.max_dataframe_size = 500
+        self.max_dataframe_size = 10000
         
         # Configuration des indicateurs
         self.indicators = {

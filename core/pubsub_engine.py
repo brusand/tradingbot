@@ -7,14 +7,18 @@ import weakref
 import fnmatch
 
 import click
+from config.settings import Settings
 
 
 class PubSubEngine:
     """Moteur PubSub pour communication asynchrone entre services"""
     
-    def __init__(self):
+    def __init__(self, settings: Settings = None):
         # Structure: channel -> liste de callbacks
         self.subscribers: Dict[str, List[Callable]] = {}
+        
+        # Configuration
+        self.settings = settings or Settings()
         
         # Statistiques
         self.stats = {
@@ -30,7 +34,7 @@ class PubSubEngine:
         self.is_running = False
         
         self.logger = logging.getLogger("PubSubEngine")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(getattr(logging, self.settings.verbose_logging.pubsub_level.upper()))
     
     async def start(self):
         """Démarre le moteur PubSub"""
@@ -143,7 +147,12 @@ class PubSubEngine:
             )
             
             self.stats["messages_published"] += 1
-            click.echo(f"🔍 [PUBSUB][PUBLISH] {channel}({message})", err=True)
+            
+            # Log conditionnel basé sur la configuration
+            if self.settings.verbose_logging.click_echo_enabled:
+                click.echo(f"🔍 [PUBSUB][PUBLISH] {channel}({message})", err=True)
+            elif self.settings.verbose_logging.pubsub_verbose:
+                self.logger.debug(f"Published message to {channel}: {type(message)}")
 
         except asyncio.TimeoutError:
             self.logger.warning(f"Message queue full, dropping message for channel '{channel}'")
@@ -152,17 +161,20 @@ class PubSubEngine:
     
     async def _message_processor(self):
         """Traite les messages de manière asynchrone"""
-        self.logger.info("🔥 Message processor started!")
+        if self.settings.verbose_logging.pubsub_verbose:
+            self.logger.info("🔥 Message processor started!")
+        
         while self.is_running:
             try:
                 # Attendre un message avec timeout
-                self.logger.debug("Waiting for message...")
                 message_data = await asyncio.wait_for(
                     self.message_queue.get(),
                     timeout=1.0
                 )
-                print(f"🔥 Got message: {message_data}")
-                self.logger.info(f"🔥 Got message: {message_data}")
+                
+                if self.settings.verbose_logging.pubsub_verbose:
+                    self.logger.debug(f"Processing message for channel: {message_data.get('channel')}")
+                
                 await self._deliver_message(message_data)
                 self.message_queue.task_done()
                 
@@ -374,4 +386,4 @@ class PubSubEngine:
 
 
 # Instance globale pour faciliter l'utilisation
-global_pubsub = PubSubEngine()
+global_pubsub = PubSubEngine(Settings())

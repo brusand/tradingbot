@@ -109,7 +109,7 @@ class IndicatorsService:
         
         # Cache des calculs récents
         self.calculation_cache = {}
-        self.cache_max_size = 1000
+        self.cache_max_size = 10000
         
         # Métriques
         self.metrics = {

@@ -31,6 +31,20 @@ class TradingConfig:
     strategy_timeout: int = 300
     risk_check_interval: int = 60
 
+@dataclass
+class VerboseLoggingConfig:
+    # Contrôle des logs verbeux
+    pubsub_verbose: bool = False  # Logs détaillés PubSub
+    market_service_verbose: bool = False  # Logs détaillés MarketService  
+    click_echo_enabled: bool = False  # Messages click.echo
+    debug_prints_enabled: bool = False  # Prints de debug
+    
+    # Niveaux de logging
+    root_level: str = "INFO"
+    pubsub_level: str = "INFO" 
+    market_service_level: str = "INFO"
+    strategy_level: str = "INFO"
+
 
 @dataclass
 class LoggingConfig:
@@ -73,6 +87,18 @@ class Settings:
             file_path=os.getenv("LOG_FILE_PATH"),
             max_file_size=int(os.getenv("LOG_MAX_FILE_SIZE", str(10 * 1024 * 1024))),
             backup_count=int(os.getenv("LOG_BACKUP_COUNT", "5"))
+        )
+        
+        # Configuration pour les logs verbeux
+        self.verbose_logging = VerboseLoggingConfig(
+            pubsub_verbose=os.getenv("PUBSUB_VERBOSE", "false").lower() == "true",
+            market_service_verbose=os.getenv("MARKET_SERVICE_VERBOSE", "false").lower() == "true",
+            click_echo_enabled=os.getenv("CLICK_ECHO_ENABLED", "false").lower() == "true",
+            debug_prints_enabled=os.getenv("DEBUG_PRINTS_ENABLED", "false").lower() == "true",
+            root_level=os.getenv("ROOT_LOG_LEVEL", "INFO"),
+            pubsub_level=os.getenv("PUBSUB_LOG_LEVEL", "INFO"),
+            market_service_level=os.getenv("MARKET_SERVICE_LOG_LEVEL", "INFO"),
+            strategy_level=os.getenv("STRATEGY_LOG_LEVEL", "INFO")
         )
     
     def to_dict(self) -> Dict[str, Any]:

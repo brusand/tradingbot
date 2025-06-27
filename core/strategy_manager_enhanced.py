@@ -216,6 +216,9 @@ class StrategyManagerEnhanced:
         # Stratégies actives
         self.active_strategies: Dict[str, TradingStrategy] = {}
         
+        # Registre global pour éviter les instances orphelines
+        self.all_strategy_instances: Dict[str, TradingStrategy] = {}
+        
         # Métriques globales
         self.global_metrics = {
             'total_strategies': 0,
@@ -250,8 +253,9 @@ class StrategyManagerEnhanced:
             strategy = TradingStrategy(enhanced_config, self.pubsub)
             await strategy.start_strategy()
             
-            # Enregistrer la stratégie
+            # Enregistrer la stratégie dans les deux registres
             self.active_strategies[session_id] = strategy
+            self.all_strategy_instances[session_id] = strategy
             
             # S'abonner aux signaux pour le tracking
             await self._subscribe_to_strategy_signals(session_id, strategy)
@@ -267,6 +271,40 @@ class StrategyManagerEnhanced:
             logger.error(f"Error starting strategy {session_id}: {e}")
             return False
     
+    async def open_strategy(self, session_id: str, strategy_config: StrategyConfig, 
+                           api_key: str = "", api_secret: str = "") -> bool:
+        """Ouvre une stratégie existante depuis la dernière sauvegarde (avec cache DataFrame)"""
+        try:
+            click.echo(f"📂 [TRACE] STRATEGY OPEN FROM CACHE", err=True)
+            if session_id in self.active_strategies:
+                logger.warning(f"Strategy {session_id} already running")
+                return False
+            
+            # Créer une configuration enrichie
+            enhanced_config = strategy_config
+            
+            # Créer et ouvrir la stratégie (avec chargement du cache)
+            strategy = TradingStrategy(enhanced_config, self.pubsub)
+            await strategy.open_strategy()  # Utilise la nouvelle méthode open_strategy
+            
+            # Enregistrer la stratégie dans les deux registres
+            self.active_strategies[session_id] = strategy
+            self.all_strategy_instances[session_id] = strategy
+            
+            # S'abonner aux signaux pour le tracking
+            await self._subscribe_to_strategy_signals(session_id, strategy)
+            
+            # Mettre à jour les métriques
+            self.global_metrics['total_strategies'] += 1
+            self.global_metrics['active_strategies'] = len(self.active_strategies)
+            
+            logger.info(f"Strategy {session_id} opened from cache with enhanced workflow")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error opening strategy {session_id}: {e}")
+            return False
+    
     async def stop_strategy(self, session_id: str) -> bool:
         """Arrête une stratégie"""
         try:
@@ -275,20 +313,93 @@ class StrategyManagerEnhanced:
                 return False
             
             strategy = self.active_strategies[session_id]
-            await strategy.stop_strategy()
             
-            # Retirer de la liste active
-            del self.active_strategies[session_id]
+            # Essayer d'abord l'arrêt normal
+            try:
+                await strategy.stop_strategy()
+                logger.info(f"Strategy {session_id} stopped normally")
+            except Exception as e:
+                logger.warning(f"Normal stop failed for {session_id}, trying force stop: {e}")
+                # Si l'arrêt normal échoue, forcer l'arrêt
+                strategy.force_stop()
+                logger.info(f"Strategy {session_id} force stopped")
+            
+            # Attendre un peu pour laisser le worker se terminer
+            await asyncio.sleep(1.0)
+            
+            # Vérifier que le worker est vraiment arrêté
+            worker_stopped = True
+            if hasattr(strategy, 'candle_processor_task') and strategy.candle_processor_task:
+                if not strategy.candle_processor_task.done():
+                    logger.warning(f"Worker still running for {session_id}, forcing cancellation")
+                    strategy.candle_processor_task.cancel()
+                    try:
+                        await asyncio.wait_for(strategy.candle_processor_task, timeout=2.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass  # Expected
+                    worker_stopped = strategy.candle_processor_task.done()
+            
+            # Retirer de la liste active seulement si le worker est arrêté
+            if worker_stopped:
+                if session_id in self.active_strategies:
+                    del self.active_strategies[session_id]
+                logger.info(f"Strategy {session_id} removed from active list")
+            else:
+                logger.warning(f"Strategy {session_id} worker still running, keeping in registry for cleanup")
             
             # Mettre à jour les métriques
             self.global_metrics['active_strategies'] = len(self.active_strategies)
             
-            logger.info(f"Strategy {session_id} stopped")
             return True
             
         except Exception as e:
             logger.error(f"Error stopping strategy {session_id}: {e}")
             return False
+    
+    async def force_cleanup_all_strategies(self) -> int:
+        """Force l'arrêt de toutes les instances de stratégies, y compris les orphelines"""
+        try:
+            cleanup_count = 0
+            
+            # Nettoyer toutes les instances du registre global
+            all_instances = list(self.all_strategy_instances.items())
+            logger.info(f"🧹 Cleaning up {len(all_instances)} strategy instances from global registry")
+            
+            for session_id, strategy in all_instances:
+                try:
+                    logger.info(f"🗑️ Force cleaning strategy instance: {session_id}")
+                    
+                    # Forcer l'arrêt de la stratégie
+                    strategy.force_stop()
+                    
+                    # Annuler le worker directement si il existe
+                    if hasattr(strategy, 'candle_processor_task') and strategy.candle_processor_task:
+                        if not strategy.candle_processor_task.done():
+                            logger.info(f"🛑 Force cancelling worker for {session_id}")
+                            strategy.candle_processor_task.cancel()
+                    
+                    cleanup_count += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error force cleaning {session_id}: {e}")
+            
+            # Vider tous les registres
+            self.all_strategy_instances.clear()
+            self.active_strategies.clear()
+            
+            # Mettre à jour les métriques
+            self.global_metrics['active_strategies'] = 0
+            
+            logger.info(f"✅ Force cleanup completed: {cleanup_count} strategies cleaned")
+            return cleanup_count
+            
+        except Exception as e:
+            logger.error(f"Error in force cleanup: {e}")
+            return 0
+    
+    def get_all_strategy_instances(self) -> Dict[str, TradingStrategy]:
+        """Retourne toutes les instances de stratégies (pour diagnostic)"""
+        return self.all_strategy_instances.copy()
     
     async def pause_strategy(self, session_id: str) -> bool:
         """Met en pause une stratégie"""

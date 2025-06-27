@@ -9,8 +9,10 @@ import asyncio
 import threading
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
+import yaml
+import os
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
@@ -23,7 +25,6 @@ from PySide6.QtCore import QThread, Signal, QTimer, Qt, QObject
 from PySide6.QtGui import QFont, QTextCursor, QAction
 
 # Import du CLI existant
-import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import de toute la logique Click existante
@@ -109,6 +110,9 @@ class TradingGUI(QMainWindow):
         # Initialiser le CLI backend
         self.trading_cli = TradingCLI()
         
+        # Charger la configuration
+        self.config_data = self.load_config()
+        
         # Thread pour asyncio
         self.asyncio_thread = AsyncioEventLoopThread()
         self.asyncio_thread.start()
@@ -119,6 +123,9 @@ class TradingGUI(QMainWindow):
         # Interface utilisateur
         self.setup_ui()
         
+        # Charger les sessions dans la combo box
+        self.load_sessions()
+        
         # Connecter les signaux
         self.log_received.connect(self.append_log)
         
@@ -126,6 +133,103 @@ class TradingGUI(QMainWindow):
         self.metrics_timer = QTimer()
         self.metrics_timer.timeout.connect(self.update_metrics)
         self.metrics_timer.start(5000)  # Toutes les 5 secondes
+    
+    def load_config(self, show_logs: bool = False) -> Dict[str, Any]:
+        """Charge le fichier de configuration trading_config.yaml"""
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                                  "config", "trading_config.yaml")
+        
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                if show_logs and hasattr(self, 'append_log'):
+                    self.append_log(f"✅ Configuration chargée depuis {config_path}")
+                return config or {}
+            else:
+                if show_logs and hasattr(self, 'append_log'):
+                    self.append_log(f"⚠️ Fichier de configuration non trouvé: {config_path}")
+                return {}
+        except Exception as e:
+            if show_logs and hasattr(self, 'append_log'):
+                self.append_log(f"❌ Erreur lors du chargement de la configuration: {e}")
+            return {}
+    
+    def load_sessions(self):
+        """Charge les sessions disponibles dans la combo box"""
+        try:
+            # Effacer la combo box
+            self.session_combo.clear()
+            
+            sessions = []
+            strategies = []
+            
+            # Extraire les sessions depuis la configuration
+            if self.config_data and 'sessions' in self.config_data:
+                sessions_config = self.config_data['sessions']
+                if isinstance(sessions_config, dict):
+                    for session_id, session_data in sessions_config.items():
+                        # Ajouter l'ID de session et le nom si disponible
+                        sessions.append(session_id)
+                        if isinstance(session_data, dict) and 'name' in session_data:
+                            name = session_data['name'].replace(' ', '_').lower()
+                            if name != session_id and name not in sessions:
+                                sessions.append(name)
+            
+            # Extraire les stratégies depuis la configuration
+            if self.config_data and 'strategies' in self.config_data:
+                strategies_config = self.config_data['strategies']
+                if isinstance(strategies_config, dict):
+                    for strategy_id, strategy_data in strategies_config.items():
+                        strategies.append(strategy_id)
+                        if isinstance(strategy_data, dict) and 'name' in strategy_data:
+                            name = strategy_data['name'].replace(' ', '_').lower()
+                            if name != strategy_id and name not in strategies:
+                                strategies.append(name)
+            
+            # Combiner sessions et stratégies avec préfixes
+            all_items = []
+            
+            # Ajouter les sessions avec préfixe
+            for session in sessions:
+                all_items.append(f"📋 {session}")
+            
+            # Ajouter les stratégies avec préfixe
+            for strategy in strategies:
+                all_items.append(f"🎯 {strategy}")
+                
+            # Si aucune configuration, utiliser des valeurs par défaut
+            if not all_items:
+                all_items = ['🎯 ema_grid_test', '🎯 rsi_strategy', '🎯 macd_strategy', '📋 test_session']
+            
+            # Trier et ajouter à la combo box
+            all_items.sort()
+            for item in all_items:
+                self.session_combo.addItem(item)
+            
+            # Logs informatifs
+            total_sessions = len(sessions)
+            total_strategies = len(strategies)
+            self.append_log(f"📋 {total_sessions} sessions et 🎯 {total_strategies} stratégies chargées")
+            
+            if all_items:
+                displayed_items = [item.split(' ', 1)[1] for item in all_items[:3]]  # Retirer les préfixes pour l'affichage
+                self.append_log(f"   Exemples: {', '.join(displayed_items)}")
+                if len(all_items) > 3:
+                    self.append_log(f"   ... et {len(all_items) - 3} autres")
+                
+        except Exception as e:
+            self.append_log(f"❌ Erreur lors du chargement des sessions: {e}")
+            # Fallback avec sessions par défaut
+            default_items = ['🎯 ema_grid_test', '🎯 rsi', '🎯 macd', '📋 test']
+            for item in default_items:
+                self.session_combo.addItem(item)
+    
+    def reload_sessions(self):
+        """Recharge les sessions depuis le fichier de configuration"""
+        self.append_log("🔄 Rechargement des sessions...")
+        self.config_data = self.load_config(show_logs=True)
+        self.load_sessions()
         
     def setup_logging(self):
         """Configure les logs pour rediriger vers l'interface"""
@@ -202,6 +306,9 @@ class TradingGUI(QMainWindow):
         sys_stop_btn = QPushButton("🛑 System Stop")
         sys_stop_btn.clicked.connect(lambda: self.execute_quick_command("system stop"))
         
+        sys_cleanup_btn = QPushButton("🧹 System Cleanup")
+        sys_cleanup_btn.clicked.connect(self.system_cleanup)
+        
         # Boutons sessions
         session_list_btn = QPushButton("📋 List Sessions")
         session_list_btn.clicked.connect(lambda: self.execute_quick_command("session list"))
@@ -209,12 +316,13 @@ class TradingGUI(QMainWindow):
         session_create_btn = QPushButton("➕ Create Session")
         session_create_btn.clicked.connect(self.show_create_session_dialog)
         
-        # Layout des boutons
+        # Layout des boutons (3x3 au lieu de 3x2)
         quick_layout.addWidget(sys_start_btn, 0, 0)
         quick_layout.addWidget(sys_status_btn, 0, 1)
         quick_layout.addWidget(sys_stop_btn, 1, 0)
-        quick_layout.addWidget(session_list_btn, 1, 1)
-        quick_layout.addWidget(session_create_btn, 2, 0, 1, 2)
+        quick_layout.addWidget(sys_cleanup_btn, 1, 1)
+        quick_layout.addWidget(session_list_btn, 2, 0)
+        quick_layout.addWidget(session_create_btn, 2, 1)
         
         command_layout.addWidget(quick_group)
         
@@ -222,25 +330,39 @@ class TradingGUI(QMainWindow):
         session_group = QGroupBox("🎯 Démarrage de session")
         session_layout = QVBoxLayout(session_group)
         
+        # Combo box avec bouton reload
+        combo_layout = QHBoxLayout()
         self.session_combo = QComboBox()
         self.session_combo.setEditable(True)
         self.session_combo.setPlaceholderText("ID de session (ex: ema)")
+        
+        reload_sessions_btn = QPushButton("🔄")
+        reload_sessions_btn.setMaximumWidth(40)
+        reload_sessions_btn.setToolTip("Recharger les sessions depuis config.yaml")
+        reload_sessions_btn.clicked.connect(self.reload_sessions)
+        
+        combo_layout.addWidget(self.session_combo)
+        combo_layout.addWidget(reload_sessions_btn)
         
         self.force_checkbox = QCheckBox("Force (no confirmation)")
         
         start_session_btn = QPushButton("▶️ Start Session")
         start_session_btn.clicked.connect(self.start_session)
         
+        open_session_btn = QPushButton("📂 Open Session")
+        open_session_btn.clicked.connect(self.open_session)
+        
         stop_session_btn = QPushButton("🛑 Stop Session")
         stop_session_btn.clicked.connect(self.stop_session)
         
         session_layout.addWidget(QLabel("Session ID:"))
-        session_layout.addWidget(self.session_combo)
+        session_layout.addLayout(combo_layout)
         session_layout.addWidget(self.force_checkbox)
         
-        # Layout horizontal pour les boutons Start/Stop
+        # Layout horizontal pour les boutons Start/Open/Stop
         buttons_layout = QHBoxLayout()
         buttons_layout.addWidget(start_session_btn)
+        buttons_layout.addWidget(open_session_btn)
         buttons_layout.addWidget(stop_session_btn)
         session_layout.addLayout(buttons_layout)
         
@@ -357,23 +479,53 @@ class TradingGUI(QMainWindow):
         
     def start_session(self):
         """Démarre une session"""
-        session_id = self.session_combo.currentText().strip()
-        if not session_id:
+        session_text = self.session_combo.currentText().strip()
+        if not session_text:
             QMessageBox.warning(self, "Erreur", "Veuillez saisir un ID de session")
             return
+        
+        # Retirer le préfixe emoji si présent
+        session_id = session_text
+        if session_text.startswith(('📋 ', '🎯 ')):
+            session_id = session_text.split(' ', 1)[1]
             
         command = f"session start {session_id}"
         if self.force_checkbox.isChecked():
             command += " --force"
             
+        self.append_log(f"🚀 Démarrage de la session '{session_id}'...")
+        self.execute_quick_command(command)
+    
+    def open_session(self):
+        """Ouvre une session existante depuis la dernière sauvegarde"""
+        session_text = self.session_combo.currentText().strip()
+        if not session_text:
+            QMessageBox.warning(self, "Erreur", "Veuillez saisir un ID de session")
+            return
+        
+        # Retirer le préfixe emoji si présent
+        session_id = session_text
+        if session_text.startswith(('📋 ', '🎯 ')):
+            session_id = session_text.split(' ', 1)[1]
+            
+        command = f"session open {session_id}"
+        if self.force_checkbox.isChecked():
+            command += " --force"
+            
+        self.append_log(f"📂 Ouverture de la session '{session_id}' depuis cache...")
         self.execute_quick_command(command)
     
     def stop_session(self):
         """Arrête une session"""
-        session_id = self.session_combo.currentText().strip()
-        if not session_id:
+        session_text = self.session_combo.currentText().strip()
+        if not session_text:
             QMessageBox.warning(self, "Erreur", "Veuillez saisir un ID de session")
             return
+        
+        # Retirer le préfixe emoji si présent
+        session_id = session_text
+        if session_text.startswith(('📋 ', '🎯 ')):
+            session_id = session_text.split(' ', 1)[1]
         
         # Demander confirmation à l'utilisateur
         reply = QMessageBox.question(
@@ -385,10 +537,27 @@ class TradingGUI(QMainWindow):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            command = f"session stop {session_id}"
-            if self.force_checkbox.isChecked():
-                command += " --force"
-                
+            # Ajouter --force automatiquement puisque l'utilisateur a déjà confirmé dans la GUI
+            command = f"session stop {session_id} --force"
+            self.append_log(f"🛑 Arrêt de la session '{session_id}'...")
+            self.execute_quick_command(command)
+    
+    def system_cleanup(self):
+        """Nettoie les workers orphelins et processus bloqués"""
+        # Demander confirmation à l'utilisateur
+        reply = QMessageBox.question(
+            self, 
+            "Confirmer le nettoyage", 
+            "⚠️ Cette action va arrêter tous les workers orphelins et processus bloqués.\n\n"
+            "Voulez-vous vraiment procéder au nettoyage du système ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Utiliser --force automatiquement puisque l'utilisateur a déjà confirmé
+            command = "system cleanup --force"
+            self.append_log("🧹 Nettoyage du système en cours...")
             self.execute_quick_command(command)
         
     def show_create_session_dialog(self):
