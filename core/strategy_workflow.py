@@ -182,6 +182,9 @@ class TradingStrategy:
         # État de la stratégie - nouvelle architecture
         self.state = "idle"  # idle, ready, running, stopped
         
+        # Optimisation cache - flag pour éviter retraitement historique
+        self._cache_optimization_active = False
+        
         # Configuration des indicateurs et règles
         self.indicators_config = getattr(config, 'indicators', {})
         self.signal_rules = getattr(config, 'signal_rules', [])
@@ -202,6 +205,142 @@ class TradingStrategy:
             'errors': 0
         }
         self.indicators_registry = IndicatorRegistry()
+    
+    def _convert_timestamp_to_seconds(self, timestamp: float) -> float:
+        """Convert timestamp to seconds, handling milliseconds automatically"""
+        if timestamp > 10000000000:  # If timestamp > 2001, it's probably in milliseconds
+            return timestamp / 1000
+        return timestamp
+    
+    def _format_timestamp_to_date(self, timestamp: float) -> str:
+        """Format timestamp to readable date string, handling milliseconds"""
+        try:
+            timestamp_seconds = self._convert_timestamp_to_seconds(timestamp)
+            return datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d %H:%M")
+        except (ValueError, OSError) as e:
+            logger.warning(f"Invalid timestamp {timestamp}: {e}")
+            return "Invalid Date"
+    
+    def _ensure_date_column(self):
+        """Ensure date column exists and is up-to-date in the DataFrame"""
+        if self.dataframe.empty or 'timestamp' not in self.dataframe.columns:
+            return
+        
+        # Check if date column exists and has the right number of rows
+        needs_date_column = (
+            'date' not in self.dataframe.columns or 
+            len(self.dataframe[self.dataframe['date'].isna()]) > 0
+        )
+        
+        if needs_date_column:
+            logger.debug(f"📅 Adding/updating date column for {len(self.dataframe)} rows")
+            self.dataframe['date'] = self.dataframe['timestamp'].apply(self._format_timestamp_to_date)
+            
+            # Réorganiser les colonnes pour mettre date après timestamp
+            cols = list(self.dataframe.columns)
+            if 'timestamp' in cols and 'date' in cols:
+                cols.remove('date')
+                timestamp_idx = cols.index('timestamp')
+                cols.insert(timestamp_idx + 1, 'date')
+                self.dataframe = self.dataframe[cols]
+    
+    async def _check_cache_exists(self) -> bool:
+        """Vérifie si un cache .feather existe pour cette stratégie"""
+        try:
+            symbol = self.config.pairs[0] if self.config.pairs else getattr(self.config, 'symbol', 'UNKNOWN')
+            timeframe = getattr(self.config, 'timeframe', '1h')
+            
+            cache_dir = Path("cache_strategies") / self.config.name / self.config.id
+            filename = f"{symbol}_{timeframe}.feather"
+            filepath = cache_dir / filename
+            
+            exists = filepath.exists() and filepath.stat().st_size > 0
+            logger.debug(f"🔍 Cache check: {filepath} exists={exists}")
+            return exists
+            
+        except Exception as e:
+            logger.debug(f"❌ Error checking cache: {e}")
+            return False
+    
+    async def _publish_optimized_data_request(self, last_timestamp: float):
+        """Publie une demande de données optimisée (seulement nouvelles chandelles)"""
+        try:
+            from datetime import datetime, timedelta
+            
+            # Calculer la nouvelle start_date depuis la dernière chandelle + 1 période
+            last_timestamp_seconds = self._convert_timestamp_to_seconds(last_timestamp)
+            last_date = datetime.fromtimestamp(last_timestamp_seconds)
+            
+            # Ajouter une période pour demander APRÈS la dernière chandelle
+            timeframe = getattr(self.config, 'timeframe', '1h')
+            timeframe_seconds = {
+                '1m': 60, '5m': 300, '15m': 900, '30m': 1800,
+                '1h': 3600, '4h': 14400, '1d': 86400
+            }
+            offset_seconds = timeframe_seconds.get(timeframe, 3600)
+            
+            # Start_date = dernière chandelle + 1 période
+            next_candle_date = last_date + timedelta(seconds=offset_seconds)
+            optimized_start_date = next_candle_date.strftime("%Y-%m-%d %H:%M:%S")
+            optimized_historic = 0  # Pas d'historique, on a déjà tout
+            original_end_date = getattr(self.config, 'end_date', 'now')  # PRÉSERVÉ
+            
+            logger.info(f"⚡ Publication optimisée:")
+            logger.info(f"   📅 Dernière chandelle cache: {last_date.strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"   📅 start_date optimisé: {optimized_start_date} (+{timeframe})")
+            logger.info(f"   📊 historic: {optimized_historic} (pas d'historique)")
+            logger.info(f"   🎯 end_date: {original_end_date} (config originale préservée)")
+            
+            # Publier avec paramètres optimisés
+            symbol = self.config.pairs[0] if self.config.pairs else getattr(self.config, 'symbol', 'UNKNOWN')
+            
+            message = {
+                "strategy_id": self.config.id,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "start_date": optimized_start_date,  # Optimisé: APRÈS dernière chandelle
+                "end_date": original_end_date,      # Original
+                "historic": optimized_historic      # Optimisé
+            }
+            
+            await self.pubsub.publish(f"market.data.request.{symbol}.{timeframe}", message)
+            logger.info(f"📤 Demande optimisée publiée: nouvelles données depuis {optimized_start_date}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error publishing optimized request: {e}")
+            # Fallback: publication normale
+            await self._publish_normal_data_request()
+    
+    async def _publish_normal_data_request(self):
+        """Publie une demande de données normale (historique complet)"""
+        try:
+            # Utiliser la config originale telle quelle
+            symbol = self.config.pairs[0] if self.config.pairs else getattr(self.config, 'symbol', 'UNKNOWN')
+            timeframe = getattr(self.config, 'timeframe', '1h')
+            start_date = getattr(self.config, 'start_date', '2025-01-01')
+            end_date = getattr(self.config, 'end_date', 'now')
+            historic = getattr(self.config, 'historic', 200)
+            
+            logger.info(f"📂 Publication normale:")
+            logger.info(f"   📅 start_date: {start_date}")
+            logger.info(f"   📊 historic: {historic}")
+            logger.info(f"   🎯 end_date: {end_date}")
+            
+            message = {
+                "strategy_id": self.config.id,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "start_date": start_date,
+                "end_date": end_date,
+                "historic": historic
+            }
+            
+            await self.pubsub.publish(f"market.data.request.{symbol}.{timeframe}", message)
+            logger.info(f"📤 Demande normale publiée: historique complet")
+            
+        except Exception as e:
+            logger.error(f"❌ Error publishing normal request: {e}")
+    
     async def start_strategy(self, load_from_cache: bool = False):
         """Démarre la stratégie - crée le worker et commence le traitement"""
         
@@ -210,12 +349,44 @@ class TradingStrategy:
             logger.info(f"🚀 Starting worker for strategy {self.config.name} (state: ready)")
         elif self.state == "idle":
             logger.info(f"🚀 Starting strategy {self.config.name} from scratch")
-            # Charger le cache si demandé
-            if load_from_cache:
+            
+            # Optimisation intelligente - SANS MODIFIER LA CONFIG
+            has_cache = await self._check_cache_exists()
+            
+            if has_cache:
+                logger.info(f"💾 Cache détecté - Chargement optimisé du DataFrame")
+                # Charger directement le DataFrame depuis le cache
                 cache_last_timestamp = await self._load_dataframe_from_cache()
+                
                 if cache_last_timestamp:
-                    # Ajuster la start_date pour reprendre depuis la dernière chandelle
-                    await self._adjust_start_date_from_cache(cache_last_timestamp)
+                    logger.info(f"⚡ DataFrame chargé depuis cache - passant directement en mode ready")
+                    # Passer directement en mode "ready" - éviter le traitement historique
+                    self.state = "ready"
+                    # Marquer que le cache a été utilisé pour optimisation
+                    self._cache_optimization_active = True
+                    
+                    # NOUVELLE LOGIQUE: Ne pas demander de données si mode batch
+                    end_date = getattr(self.config, 'end_date', 'now')
+                    if end_date == 'now':
+                        logger.info(f"🏁 Mode batch avec cache - Aucune demande de données, auto-stop immédiat")
+                        # Auto-stop immédiat en mode batch - pas besoin de nouvelles données
+                        self.state = "completed"
+                        self._cache_optimization_active = False
+                        return  # Sortir sans démarrer le worker
+                    else:
+                        # Mode live - demander nouvelles données seulement
+                        logger.info(f"🔄 Mode live avec cache - Demande données après cache")
+                        await self._publish_optimized_data_request(cache_last_timestamp)
+                else:
+                    # Cache invalide, traitement normal
+                    logger.warning("⚠️ Cache invalide, basculement vers traitement normal")
+                    self._cache_optimization_active = False
+                    await self._publish_normal_data_request()
+            else:
+                logger.info(f"📂 Pas de cache - Chargement historique complet")
+                # Publication normale avec config originale
+                self._cache_optimization_active = False
+                await self._publish_normal_data_request()
             
             # Initialiser les services si pas déjà fait
             await self._initialize_services()
@@ -292,6 +463,10 @@ class TradingStrategy:
         self.is_running = False
         self._stopping = True
         self.state = "stopped"
+        
+        # Réinitialiser l'optimisation cache
+        self._cache_optimization_active = False
+        
         logger.info(f"🔴 Set is_running=False for {self.config.name}")
         
         # Publier un message de désabonnement au market service
@@ -467,11 +642,15 @@ class TradingStrategy:
             
             # Traiter les données historiques d'abord (en tant que liste)
             if historic_data and len(historic_data) > 0:
-                logger.info(f"📈 Queuing {len(historic_data)} historic candles as batch")
-                await asyncio.wait_for(
-                    self.candle_queue.put(historic_data),  # Envoyer la liste complète
-                    timeout=2.0
-                )
+                # OPTIMISATION: Skip historique si cache est chargé
+                if hasattr(self, '_cache_optimization_active') and self._cache_optimization_active:
+                    logger.info(f"⚡ OPTIMISATION: Skip {len(historic_data)} historic candles (cache chargé)")
+                else:
+                    logger.info(f"📈 Queuing {len(historic_data)} historic candles as batch")
+                    await asyncio.wait_for(
+                        self.candle_queue.put(historic_data),  # Envoyer la liste complète
+                        timeout=2.0
+                    )
             
             # Traiter les chandelles courantes individuellement (temps réel)
             if candles_data and len(candles_data) > 0:
@@ -683,6 +862,9 @@ class TradingStrategy:
         self.is_running = False
         self.state = "completed"  # État spécial pour arrêt automatique
         
+        # Réinitialiser l'optimisation cache
+        self._cache_optimization_active = False
+        
         # Publier événement de completion
         try:
             completion_event = {
@@ -733,7 +915,7 @@ class TradingStrategy:
         
         # Publier vers un canal de statut pour l'UI (logs réduits)
         try:
-            logger.debug(f"📈 Queue empty for {self.config.name}")
+            # logger.debug(f"📈 Queue empty for {self.config.name}")  # Temporarily commented out to reduce spam
             await self.pubsub.publish(f"strategy.status.{self.config.name}", queue_status)
         except Exception as e:
             logger.warning(f"Error publishing queue status: {e}")
@@ -777,11 +959,17 @@ class TradingStrategy:
             self._completion_count = 0
         self._completion_count += 1
         
+        # DEBUG: Analyser la configuration end_date
+        current_end_date = getattr(self.config, 'end_date', 'MISSING')
+        has_end_date = hasattr(self.config, 'end_date')
+        logger.info(f"🔍 DEBUG Auto-stop: end_date='{current_end_date}', hasattr={has_end_date}, completion#{self._completion_count}")
+        
         # Si on n'est pas en mode live (end_date != "live"), arrêter le worker
         if hasattr(self.config, 'end_date') and self.config.end_date != "live":
             logger.info(f"🏁 Batch completed in non-live mode (end_date={self.config.end_date}) - auto-stopping worker for {self.config.name}")
             self.is_running = False
             self.state = "completed"
+            logger.info(f"🛑 Worker auto-stopped: is_running={self.is_running}, state={self.state}")
         # Arrêt de sécurité : si trop de completions en mode live (worker phantom)
         elif self._completion_count > 3:
             logger.warning(f"🚨 Too many completions ({self._completion_count}) - stopping potential phantom worker for {self.config.name}")
@@ -793,8 +981,13 @@ class TradingStrategy:
     async def _save_dataframe_to_cache(self):
         """Sauvegarde le DataFrame en format Feather pour analyse de performance"""
         try:
+            logger.info(f"💾 Attempting to save DataFrame for {self.config.name}")
+            logger.info(f"📊 DataFrame shape: {self.dataframe.shape}")
+            logger.info(f"📈 DataFrame empty: {self.dataframe.empty}")
+            
             if self.dataframe.empty:
-                logger.debug("Empty DataFrame, skipping cache save")
+                logger.warning("❌ Empty DataFrame, skipping cache save - this explains why .feather files are empty!")
+                logger.info(f"🔍 Processing metrics: {self.processing_metrics}")
                 return
             
             # Déterminer la paire et timeframe
@@ -893,7 +1086,7 @@ class TradingStrategy:
                 return None
             
             # Extraire les colonnes de données principales (exclure métadonnées)
-            data_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            data_columns = ['timestamp', 'date', 'open', 'high', 'low', 'close', 'volume']
             available_data_columns = [col for col in data_columns if col in cached_df.columns]
             
             if not available_data_columns:
@@ -911,6 +1104,8 @@ class TradingStrategy:
             # Restaurer le DataFrame principal
             async with self.dataframe_lock:
                 self.dataframe = data_df.copy()
+                # Utiliser la méthode centralisée pour s'assurer que la colonne date existe
+                self._ensure_date_column()
             
             # Obtenir le timestamp de la dernière chandelle
             last_timestamp = None
@@ -998,6 +1193,11 @@ class TradingStrategy:
                 logger.warning("Empty candles list received")
                 return
             
+            # OPTIMISATION: Si cache actif, ne pas traiter du tout l'historique
+            if hasattr(self, '_cache_optimization_active') and self._cache_optimization_active:
+                logger.info(f"⚡ OPTIMISATION: Skip complet de {len(candles_list)} chandelles historiques (cache chargé)")
+                return
+            
             #logger.info(f"🔄 Processing {len(candles_list)} historical candles without indicators")
             
             processed_count = 0
@@ -1021,6 +1221,9 @@ class TradingStrategy:
             
             # Mettre à jour les métriques
             self.processing_metrics['candles_processed'] += processed_count
+            
+            # S'assurer que la colonne date est présente après traitement par lots
+            self._ensure_date_column()
             
             logger.info(f"✅ Historical candles processed: {processed_count} added, {skipped_count} skipped")
             logger.info(f"📊 DataFrame now contains {len(self.dataframe)} total rows")
@@ -1096,10 +1299,37 @@ class TradingStrategy:
         async with self.dataframe_lock:
             # Validation timestamp
             candle_timestamp = candle_data.get("timestamp", 0)
+            logger.debug(f"🕐 Validating candle: timestamp={candle_timestamp}, last={self.last_processed_timestamp}")
+            
             if candle_timestamp <= self.last_processed_timestamp:
+                logger.debug(f"⏭️ Skipping candle: timestamp {candle_timestamp} <= last {self.last_processed_timestamp}")
                 return False
             
-            # Créer nouvelle ligne
+            # NOUVEAU: Exclure chandelle courante non-close en mode batch
+            if hasattr(self.config, 'end_date') and self.config.end_date == 'now':
+                from datetime import datetime
+                current_time = datetime.now().timestamp() * 1000  # ms
+                candle_timestamp_ms = float(candle_timestamp)
+                
+                # Calculer le seuil selon le timeframe
+                timeframe = getattr(self.config, 'timeframe', '1h')
+                timeframe_ms = {
+                    '1m': 60000,
+                    '5m': 300000,
+                    '15m': 900000,
+                    '30m': 1800000,
+                    '1h': 3600000,
+                    '4h': 14400000,
+                    '1d': 86400000
+                }
+                threshold_ms = timeframe_ms.get(timeframe, 3600000)  # Default 1h
+                
+                # Si la chandelle est trop récente (période courante non-close), la rejeter
+                if current_time - candle_timestamp_ms < threshold_ms:
+                    logger.debug(f"⏭️ Skipping non-closed candle in batch mode: {candle_timestamp} (too recent)")
+                    return False
+            
+            # Créer nouvelle ligne avec données brutes de l'exchange (sans date)
             new_row = pd.DataFrame([{
                 'timestamp': candle_timestamp,
                 'open': float(candle_data.get('open', 0)),
@@ -1111,16 +1341,25 @@ class TradingStrategy:
             
             # Ajouter au DataFrame
             if self.dataframe.empty:
+                logger.debug(f"📊 Creating new DataFrame with first candle")
                 self.dataframe = new_row
             else:
+                logger.debug(f"📈 Adding candle to existing DataFrame (current size: {len(self.dataframe)})")
                 self.dataframe = pd.concat([self.dataframe, new_row], ignore_index=True)
+            
+            # Ajouter/mettre à jour la colonne date si elle n'existe pas ou est incomplète
+            self._ensure_date_column()
             
             # Limiter la taille
             max_rows = getattr(self.config, 'max_dataframe_size', 10000)
             if len(self.dataframe) > max_rows:
+                logger.debug(f"✂️ Trimming DataFrame from {len(self.dataframe)} to {max_rows} rows")
                 self.dataframe = self.dataframe.tail(max_rows).reset_index(drop=True)
+                # Recalculer la colonne date après trimming
+                self._ensure_date_column()
             
             self.last_processed_timestamp = candle_timestamp
+            logger.debug(f"✅ Candle added successfully. DataFrame now has {len(self.dataframe)} rows")
             return True
     
     async def _calculate_indicators_parallel(self):

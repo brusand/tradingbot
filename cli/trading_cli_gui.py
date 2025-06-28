@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, List
 import logging
 import yaml
 import os
+import pandas as pd
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
@@ -133,6 +134,11 @@ class TradingGUI(QMainWindow):
         self.metrics_timer = QTimer()
         self.metrics_timer.timeout.connect(self.update_metrics)
         self.metrics_timer.start(5000)  # Toutes les 5 secondes
+        
+        # Timer pour rafraîchissement automatique de la DataFrame
+        self.dataframe_timer = QTimer()
+        self.dataframe_timer.timeout.connect(self.auto_refresh_dataframe)
+        self.dataframe_timer.start(10000)  # Toutes les 10 secondes
     
     def load_config(self, show_logs: bool = False) -> Dict[str, Any]:
         """Charge le fichier de configuration trading_config.yaml"""
@@ -409,7 +415,36 @@ class TradingGUI(QMainWindow):
         sessions_layout.addWidget(self.sessions_table)
         data_widget.addTab(sessions_widget, "🎯 Sessions")
         
+        # Tab Stratégies (dynamique selon la session)
+        self.setup_strategies_tab(data_widget)
+        
         parent.addWidget(data_widget)
+    
+    def setup_strategies_tab(self, parent_tab_widget):
+        """Configure les onglets de stratégies (créés dynamiquement)"""
+        # Container pour les onglets de stratégies
+        self.strategies_tab_widget = QTabWidget()
+        
+        # Message par défaut quand aucune session n'est chargée
+        default_widget = QWidget()
+        default_layout = QVBoxLayout(default_widget)
+        
+        default_label = QLabel("🎯 Sélectionnez une session pour voir les stratégies\n\n"
+                              "📂 Open Session → Charge les stratégies automatiquement\n"
+                              "▶️ Start Session → Met à jour les données en temps réel")
+        default_label.setAlignment(Qt.AlignCenter)
+        default_label.setFont(QFont("Arial", 12))
+        default_label.setStyleSheet("color: #666; padding: 40px;")
+        
+        default_layout.addWidget(default_label)
+        self.strategies_tab_widget.addTab(default_widget, "ℹ️ Info")
+        
+        # Ajouter l'onglet principal
+        parent_tab_widget.addTab(self.strategies_tab_widget, "🎯 Stratégies")
+        
+        # Registre des stratégies chargées
+        self.loaded_strategies = {}
+        self.strategy_dataframes = {}
         
     def setup_status_bar(self):
         """Configure la barre de statut"""
@@ -514,6 +549,9 @@ class TradingGUI(QMainWindow):
             
         self.append_log(f"📂 Ouverture de la session '{session_id}' depuis cache...")
         self.execute_quick_command(command)
+        
+        # Charger automatiquement les stratégies après ouverture
+        QTimer.singleShot(2000, lambda: self.load_strategies_for_session(session_id))
     
     def stop_session(self):
         """Arrête une session"""
@@ -629,6 +667,445 @@ class TradingGUI(QMainWindow):
                          "Interface graphique pour le Trading CLI\n"
                          "Utilise PySide6 + Click + AsyncIO\n\n"
                          "© 2025")
+    
+    def load_strategies_for_session(self, session_id: str):
+        """Charge toutes les stratégies pour une session donnée"""
+        try:
+            # Obtenir les stratégies depuis la configuration
+            strategies = self.get_strategies_for_session(session_id)
+            
+            if not strategies:
+                self.append_log(f"📊 Aucune stratégie trouvée pour la session {session_id}")
+                return
+            
+            # Nettoyer les anciens onglets (sauf le premier "Info")
+            while self.strategies_tab_widget.count() > 1:
+                self.strategies_tab_widget.removeTab(1)
+            
+            # Créer un onglet pour chaque stratégie
+            for strategy_id in strategies:
+                self.create_strategy_tab(session_id, strategy_id)
+            
+            self.append_log(f"🎯 {len(strategies)} stratégies chargées: {', '.join(strategies)}")
+            
+        except Exception as e:
+            self.append_log(f"❌ Erreur chargement stratégies: {e}")
+    
+    def get_strategies_for_session(self, session_id: str) -> List[str]:
+        """Récupère la liste des stratégies pour une session"""
+        try:
+            # Chercher dans la configuration yaml
+            if self.config_data and 'sessions' in self.config_data:
+                sessions = self.config_data['sessions']
+                
+                # Chercher la session par ID ou nom
+                session_config = None
+                for sid, sconfig in sessions.items():
+                    if sid == session_id or (isinstance(sconfig, dict) and sconfig.get('name', '').replace(' ', '_').lower() == session_id):
+                        session_config = sconfig
+                        break
+                
+                if session_config and isinstance(session_config, dict) and 'strategies' in session_config:
+                    return session_config['strategies']
+            
+            # Fallback: chercher dans les répertoires de cache
+            strategies = []
+            cache_base = "cache_strategies"
+            if os.path.exists(cache_base):
+                for strategy_name in os.listdir(cache_base):
+                    strategy_path = os.path.join(cache_base, strategy_name)
+                    if os.path.isdir(strategy_path):
+                        # Chercher les sous-répertoires (strategy_id)
+                        for strategy_id in os.listdir(strategy_path):
+                            strategy_cache_path = os.path.join(strategy_path, strategy_id)
+                            if os.path.isdir(strategy_cache_path) and any(f.endswith('.feather') for f in os.listdir(strategy_cache_path)):
+                                strategies.append(strategy_id)
+            
+            return strategies if strategies else [session_id]  # Au minimum la session elle-même
+            
+        except Exception as e:
+            self.append_log(f"❌ Erreur get_strategies_for_session: {e}")
+            return [session_id]  # Fallback
+    
+    def create_strategy_tab(self, session_id: str, strategy_id: str):
+        """Crée un onglet pour une stratégie avec ses sous-onglets"""
+        try:
+            # Container principal pour la stratégie
+            strategy_widget = QTabWidget()
+            
+            # Sous-onglet DataFrame
+            dataframe_tab = self.create_dataframe_subtab(session_id, strategy_id)
+            strategy_widget.addTab(dataframe_tab, "📈 DataFrame")
+            
+            # Sous-onglet Chart (placeholder pour l'instant)
+            chart_tab = QWidget()
+            chart_layout = QVBoxLayout(chart_tab)
+            chart_label = QLabel(f"📊 Chart pour {strategy_id}\\n\\n(À implémenter)")
+            chart_label.setAlignment(Qt.AlignCenter)
+            chart_label.setStyleSheet("color: #666; padding: 40px;")
+            chart_layout.addWidget(chart_label)
+            strategy_widget.addTab(chart_tab, "📊 Chart")
+            
+            # Sous-onglet Portfolio (placeholder pour l'instant)
+            portfolio_tab = QWidget()
+            portfolio_layout = QVBoxLayout(portfolio_tab)
+            portfolio_label = QLabel(f"💼 Portfolio pour {strategy_id}\\n\\n(À implémenter)")
+            portfolio_label.setAlignment(Qt.AlignCenter)
+            portfolio_label.setStyleSheet("color: #666; padding: 40px;")
+            portfolio_layout.addWidget(portfolio_label)
+            strategy_widget.addTab(portfolio_tab, "💼 Portfolio")
+            
+            # Ajouter l'onglet de stratégie au container principal
+            self.strategies_tab_widget.addTab(strategy_widget, f"🎯 {strategy_id}")
+            
+            # Mémoriser pour références futures
+            self.loaded_strategies[strategy_id] = {
+                'session_id': session_id,
+                'widget': strategy_widget,
+                'dataframe_tab': dataframe_tab
+            }
+            
+        except Exception as e:
+            self.append_log(f"❌ Erreur création onglet stratégie {strategy_id}: {e}")
+    
+    def create_dataframe_subtab(self, session_id: str, strategy_id: str):
+        """Crée le sous-onglet DataFrame pour une stratégie"""
+        dataframe_widget = QWidget()
+        dataframe_layout = QVBoxLayout(dataframe_widget)
+        
+        # Titre et informations
+        info_layout = QHBoxLayout()
+        
+        info_label = QLabel(f"📈 DataFrame - {strategy_id}")
+        info_label.setFont(QFont("Arial", 10, QFont.Bold))
+        
+        refresh_btn = QPushButton("🔄 Actualiser")
+        refresh_btn.setMaximumWidth(100)
+        refresh_btn.clicked.connect(lambda: self.refresh_strategy_dataframe(session_id, strategy_id))
+        
+        info_layout.addWidget(info_label)
+        info_layout.addStretch()
+        info_layout.addWidget(refresh_btn)
+        
+        dataframe_layout.addLayout(info_layout)
+        
+        # Table pour afficher la DataFrame
+        dataframe_table = QTableWidget()
+        dataframe_table.setAlternatingRowColors(True)
+        dataframe_table.setSelectionBehavior(QTableWidget.SelectRows)
+        dataframe_table.setSortingEnabled(True)
+        dataframe_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        dataframe_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        dataframe_layout.addWidget(dataframe_table)
+        
+        # Sauvegarder les références
+        self.strategy_dataframes[strategy_id] = {
+            'table': dataframe_table,
+            'info_label': info_label,
+            'session_id': session_id,
+            'file_path': None,
+            'last_mtime': None
+        }
+        
+        # Charger immédiatement la DataFrame si elle existe
+        self.load_dataframe_for_strategy(session_id, strategy_id)
+        
+        return dataframe_widget
+    
+    def refresh_strategy_dataframe(self, session_id: str, strategy_id: str):
+        """Actualise la DataFrame d'une stratégie spécifique"""
+        try:
+            self.load_dataframe_for_strategy(session_id, strategy_id)
+        except Exception as e:
+            self.append_log(f"❌ Erreur refresh DataFrame {strategy_id}: {e}")
+    
+    def load_dataframe_for_strategy(self, session_id: str, strategy_id: str):
+        """Charge la DataFrame pour une stratégie spécifique"""
+        try:
+            if strategy_id not in self.strategy_dataframes:
+                self.append_log(f"⚠️ Stratégie {strategy_id} non trouvée dans le registre")
+                return
+            
+            strategy_data = self.strategy_dataframes[strategy_id]
+            table = strategy_data['table']
+            info_label = strategy_data['info_label']
+            
+            # Chercher le fichier DataFrame dans le cache
+            import pandas as pd
+            
+            self.append_log(f"🔍 Recherche DataFrame pour {strategy_id}...")
+            
+            # Chercher dans tous les répertoires de cache pour trouver la stratégie
+            feather_files = []
+            cache_base = "cache_strategies"
+            
+            if not os.path.exists(cache_base):
+                self.append_log(f"❌ Répertoire cache inexistant: {cache_base}")
+                info_label.setText(f"📈 DataFrame - {strategy_id} | Cache inexistant")
+                return
+            
+            self.append_log(f"📁 Scan cache dans: {cache_base}")
+            
+            for strategy_name in os.listdir(cache_base):
+                strategy_path = os.path.join(cache_base, strategy_name, strategy_id)
+                self.append_log(f"  🔍 Cherche dans: {strategy_path}")
+                
+                if os.path.exists(strategy_path):
+                    files_in_dir = os.listdir(strategy_path)
+                    feather_count = sum(1 for f in files_in_dir if f.endswith('.feather'))
+                    self.append_log(f"  ✅ Trouvé répertoire avec {feather_count} fichiers .feather")
+                    
+                    for file in files_in_dir:
+                        if file.endswith('.feather'):
+                            full_path = os.path.join(strategy_path, file)
+                            feather_files.append(full_path)
+                            self.append_log(f"    📄 {file}")
+                    break  # Trouvé la stratégie, pas besoin de continuer
+                else:
+                    self.append_log(f"  ❌ Pas trouvé: {strategy_path}")
+            
+            if not feather_files:
+                info_label.setText(f"📈 DataFrame - {strategy_id} | Aucune donnée trouvée")
+                table.setRowCount(0)
+                table.setColumnCount(0)
+                self.append_log(f"📊 Aucun cache DataFrame trouvé pour {strategy_id}")
+                return
+            
+            # Charger le fichier .feather le plus récent
+            if len(feather_files) > 1:
+                # Trier par date de modification (le plus récent en premier)
+                feather_files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+                self.append_log(f"📊 {len(feather_files)} fichiers trouvés, sélection du plus récent")
+            
+            dataframe_file = feather_files[0]
+            self.append_log(f"📂 Chargement: {os.path.basename(dataframe_file)}")
+            
+            df = pd.read_feather(dataframe_file)
+            
+            self.display_dataframe_for_strategy(df, dataframe_file, session_id, strategy_id)
+            self.append_log(f"✅ DataFrame {strategy_id}: {len(df)} lignes, {len(df.columns)} colonnes")
+            
+        except Exception as e:
+            if strategy_id in self.strategy_dataframes:
+                self.strategy_dataframes[strategy_id]['info_label'].setText(f"❌ Erreur: {str(e)}")
+            self.append_log(f"❌ Erreur chargement DataFrame {strategy_id}: {e}")
+    
+    def display_dataframe_for_strategy(self, df, file_path: str, session_id: str, strategy_id: str):
+        """Affiche la DataFrame dans la table d'une stratégie spécifique"""
+        try:
+            self.append_log(f"🎨 Début affichage DataFrame pour {strategy_id}")
+            self.append_log(f"📊 DataFrame shape: {df.shape}")
+            self.append_log(f"📋 Colonnes: {list(df.columns)}")
+            
+            if strategy_id not in self.strategy_dataframes:
+                self.append_log(f"❌ Strategy {strategy_id} not found in strategy_dataframes registry")
+                return
+                
+            strategy_data = self.strategy_dataframes[strategy_id]
+            table = strategy_data['table']
+            info_label = strategy_data['info_label']
+            
+            self.append_log(f"✅ Strategy data found, table widget: {type(table)}")
+            
+            # Mettre à jour les informations
+            file_name = os.path.basename(file_path)
+            last_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+            info_label.setText(
+                f"📈 {strategy_id} | {file_name} | {len(df)} lignes × {len(df.columns)} colonnes | {last_modified.strftime('%H:%M:%S')}"
+            )
+            
+            # Limiter l'affichage pour les performances
+            display_df = df.tail(1000) if len(df) > 1000 else df
+            self.append_log(f"📊 Display DataFrame: {len(display_df)} lignes × {len(display_df.columns)} colonnes")
+            
+            # Configurer la table
+            table.setRowCount(len(display_df))
+            table.setColumnCount(len(display_df.columns))
+            table.setHorizontalHeaderLabels([str(col) for col in display_df.columns])
+            self.append_log(f"🔧 Table configurée: {table.rowCount()} lignes × {table.columnCount()} colonnes")
+            
+            # Remplir les données
+            self.append_log(f"📝 Début remplissage table...")
+            for row in range(len(display_df)):
+                for col in range(len(display_df.columns)):
+                    value = display_df.iloc[row, col]
+                    
+                    # Formatage des valeurs selon le type de colonne
+                    column_name = display_df.columns[col]
+                    
+                    if pd.isna(value):
+                        display_value = "NaN"
+                    elif column_name == 'timestamp':
+                        # Afficher timestamp comme entier
+                        display_value = str(int(value)) if isinstance(value, (int, float)) else str(value)
+                    elif column_name == 'date':
+                        # Date déjà formatée, afficher telle quelle
+                        display_value = str(value)
+                    elif column_name in ['open', 'high', 'low', 'close']:
+                        # Prix avec 2 décimales
+                        display_value = f"{float(value):.2f}" if isinstance(value, (int, float)) else str(value)
+                    elif column_name == 'volume':
+                        # Volume avec 3 décimales
+                        display_value = f"{float(value):.3f}" if isinstance(value, (int, float)) else str(value)
+                    elif isinstance(value, float):
+                        # Autres valeurs numériques avec 6 décimales (indicateurs)
+                        display_value = f"{value:.6f}"
+                    else:
+                        display_value = str(value)
+                    
+                    item = QTableWidgetItem(display_value)
+                    table.setItem(row, col, item)
+            
+            self.append_log(f"✅ Table remplie: {len(display_df)} lignes × {len(display_df.columns)} colonnes")
+            
+            # Ajuster les colonnes
+            table.resizeColumnsToContents()
+            self.append_log(f"🔧 Colonnes ajustées")
+            
+            # Mémoriser le chemin et mtime
+            strategy_data['file_path'] = file_path
+            strategy_data['last_mtime'] = os.path.getmtime(file_path)
+            
+            if len(df) > 1000:
+                self.append_log(f"📊 {strategy_id}: Affichage limité aux 1000 dernières lignes (total: {len(df)})")
+            
+            self.append_log(f"🎉 DataFrame {strategy_id} affiché avec succès!")
+                
+        except Exception as e:
+            self.append_log(f"❌ Erreur affichage DataFrame {strategy_id}: {e}")
+            import traceback
+            self.append_log(f"📝 Traceback: {traceback.format_exc()}")
+    
+    def load_dataframe_for_session(self, session_id: str):
+        """Charge la DataFrame pour une session donnée"""
+        try:
+            # Chercher le fichier DataFrame dans le cache
+            import os
+            import pandas as pd
+            
+            # Chemin basé sur la structure de cache existante
+            strategy_name = "EMA Grid Test"  # À adapter selon la session
+            cache_base = f"cache_strategies/{strategy_name}/{session_id}"
+            
+            # Chercher les fichiers .feather dans le répertoire de cache
+            feather_files = []
+            if os.path.exists(cache_base):
+                for file in os.listdir(cache_base):
+                    if file.endswith('.feather'):
+                        feather_files.append(os.path.join(cache_base, file))
+            
+            if not feather_files:
+                self.dataframe_info_label.setText(f"📈 Aucune DataFrame trouvée pour {session_id}")
+                self.dataframe_table.setRowCount(0)
+                self.dataframe_table.setColumnCount(0)
+                self.append_log(f"📊 Aucun cache DataFrame trouvé pour {session_id}")
+                return
+            
+            # Charger le premier fichier .feather trouvé
+            dataframe_file = feather_files[0]
+            df = pd.read_feather(dataframe_file)
+            
+            self.display_dataframe(df, dataframe_file, session_id)
+            self.append_log(f"📈 DataFrame chargée: {len(df)} lignes, {len(df.columns)} colonnes")
+            
+        except Exception as e:
+            self.dataframe_info_label.setText(f"❌ Erreur: {str(e)}")
+            self.append_log(f"❌ Erreur chargement DataFrame: {e}")
+    
+    def display_dataframe(self, df, file_path: str, session_id: str):
+        """Affiche la DataFrame dans la table"""
+        try:
+            # Mettre à jour les informations
+            file_name = os.path.basename(file_path)
+            last_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+            self.dataframe_info_label.setText(
+                f"📈 {session_id} | {file_name} | {len(df)} lignes × {len(df.columns)} colonnes | {last_modified.strftime('%H:%M:%S')}"
+            )
+            
+            # Limiter l'affichage pour les performances (ex: 1000 lignes max)
+            display_df = df.tail(1000) if len(df) > 1000 else df
+            
+            # Configurer la table
+            self.dataframe_table.setRowCount(len(display_df))
+            self.dataframe_table.setColumnCount(len(display_df.columns))
+            self.dataframe_table.setHorizontalHeaderLabels([str(col) for col in display_df.columns])
+            
+            # Remplir les données
+            for row in range(len(display_df)):
+                for col in range(len(display_df.columns)):
+                    value = display_df.iloc[row, col]
+                    
+                    # Formatage des valeurs selon le type de colonne
+                    column_name = display_df.columns[col]
+                    
+                    if pd.isna(value):
+                        display_value = "NaN"
+                    elif column_name == 'timestamp':
+                        # Afficher timestamp comme entier
+                        display_value = str(int(value)) if isinstance(value, (int, float)) else str(value)
+                    elif column_name == 'date':
+                        # Date déjà formatée, afficher telle quelle
+                        display_value = str(value)
+                    elif column_name in ['open', 'high', 'low', 'close']:
+                        # Prix avec 2 décimales
+                        display_value = f"{float(value):.2f}" if isinstance(value, (int, float)) else str(value)
+                    elif column_name == 'volume':
+                        # Volume avec 3 décimales
+                        display_value = f"{float(value):.3f}" if isinstance(value, (int, float)) else str(value)
+                    elif isinstance(value, float):
+                        # Autres valeurs numériques avec 6 décimales (indicateurs)
+                        display_value = f"{value:.6f}"
+                    else:
+                        display_value = str(value)
+                    
+                    item = QTableWidgetItem(display_value)
+                    self.dataframe_table.setItem(row, col, item)
+            
+            # Ajuster les colonnes
+            self.dataframe_table.resizeColumnsToContents()
+            
+            # Mémoriser le chemin et l'heure
+            self.current_dataframe_path = file_path
+            self.last_dataframe_update = datetime.now()
+            self.last_dataframe_mtime = os.path.getmtime(file_path)
+            
+            if len(df) > 1000:
+                self.append_log(f"📊 Affichage limité aux 1000 dernières lignes (total: {len(df)})")
+                
+        except Exception as e:
+            self.append_log(f"❌ Erreur affichage DataFrame: {e}")
+    
+    def auto_refresh_dataframe(self):
+        """Rafraîchissement automatique des DataFrames de toutes les stratégies"""
+        try:
+            # Parcourir toutes les stratégies chargées
+            for strategy_id, strategy_data in self.strategy_dataframes.items():
+                file_path = strategy_data.get('file_path')
+                last_mtime = strategy_data.get('last_mtime')
+                
+                if not file_path or not os.path.exists(file_path):
+                    continue
+                
+                # Vérifier si le fichier a été modifié
+                current_mtime = os.path.getmtime(file_path)
+                if last_mtime and current_mtime == last_mtime:
+                    continue  # Pas de modification
+                
+                # Le fichier a été modifié, recharger
+                session_id = strategy_data['session_id']
+                try:
+                    import pandas as pd
+                    df = pd.read_feather(file_path)
+                    self.display_dataframe_for_strategy(df, file_path, session_id, strategy_id)
+                    self.append_log(f"🔄 DataFrame {strategy_id} auto-rafraîchie: {len(df)} lignes")
+                except Exception as e:
+                    # Erreur silencieuse par stratégie
+                    pass
+                
+        except Exception as e:
+            # Erreur silencieuse globale
+            pass
         
     def closeEvent(self, event):
         """Gestion de la fermeture de l'application"""

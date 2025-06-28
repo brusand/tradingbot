@@ -15,9 +15,9 @@ sessions:
     killed_at: '2025-06-05T07:27:49.882281+00:00'
     mode: paper
     name: ema grid
-    start_time: '2025-06-27T18:41:21.960587+00:00'
+    start_time: '2025-06-28T17:07:52.546149+00:00'
     status: running
-    stopped_at: '2025-06-27T14:27:22.054565+00:00'
+    stopped_at: '2025-06-28T10:13:33.359898+00:00'
     strategies:
     - ema_grid_test
     workflow_enabled: true
