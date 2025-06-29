@@ -15,7 +15,7 @@ sessions:
     killed_at: '2025-06-05T07:27:49.882281+00:00'
     mode: paper
     name: ema grid
-    start_time: '2025-06-28T17:07:52.546149+00:00'
+    start_time: '2025-06-29T10:27:04.629343+00:00'
     status: running
     stopped_at: '2025-06-28T10:13:33.359898+00:00'
     strategies:
@@ -52,9 +52,15 @@ strategies:
       stop_loss_percent: 2.0
       take_profit_percent: 4.0
     signal_rules:
-      long_condition: SHORT > LONG & SHORT[-1] < LONG[-1]
-      short_condition: SHORT < LONG & SHORT[-1] > LONG[-1]
-    start_date: '2025-01-01'
+    - condition: SHORT > LONG & SHORT[-1] < LONG[-1]
+      name: ema_crossover_long
+      priority: 2
+      signal_type: LONG
+    - condition: SHORT < LONG & SHORT[-1] > LONG[-1]
+      name: ema_crossover_short
+      priority: 2
+      signal_type: SHORT
+    start_date: '2025-06-01'
     status: inactive
     symbol: XBTUSD
     timeframe: 1h

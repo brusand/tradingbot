@@ -261,7 +261,11 @@ class StrategyGridGenerator:
                 keys = param_path.split('.')
                 value = first_strategy
                 for key in keys:
-                    value = value.get(key, 'N/A')
+                    if isinstance(value, dict):
+                        value = value.get(key, 'N/A')
+                    else:
+                        value = 'N/A'
+                        break
                 print(f"  {param_path}: {value}")
 
 

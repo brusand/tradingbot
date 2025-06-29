@@ -35,7 +35,8 @@ class EnhancedStrategyConfig:
         self.historic = base_config.historic
         self.exchange = base_config.exchange
         # Nouvelles propriétés pour le workflow
-        self.max_dataframe_size = 1000
+        # Augmentation pour permettre l'affichage de toutes les données historiques
+        self.max_dataframe_size = 50000  # Suffisant pour plusieurs mois de données 1h
         self.indicators = {}
         self.signal_rules = []
         

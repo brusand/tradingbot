@@ -83,11 +83,34 @@ class DataFrameConditionInterpreter:
         - "close > SMA_20 & SMA_20 > SMA_50"
         """
         try:
-            # Remplacer les références de colonnes par les valeurs
+            # Check basic requirements
+            if self.df.empty:
+                return False
+                
+            if len(self.df) < 2:
+                if "[-1]" in condition_str or "[-2]" in condition_str:
+                    return False
+            
+            # Vérifier les colonnes requises par la condition
+            import re
+            column_pattern = r'\b([a-zA-Z]\w*(?:_\w+)*)'
+            required_columns = set(re.findall(column_pattern, condition_str))
+            # Filtrer les mots-clés et constantes
+            keywords = {'and', 'or', 'not', 'True', 'False', 'float', 'nan'}
+            required_columns = {col for col in required_columns if col not in keywords}
+            
+            missing_columns = required_columns - self.available_columns
+            if missing_columns:
+                return False
+            
+            # Parse and evaluate condition
             parsed_condition = self._parse_condition_string(condition_str)
             
-            # Évaluer l'expression
+            if "nan" in parsed_condition.lower():
+                return False
+            
             result = eval(parsed_condition)
+            
             return bool(result)
             
         except Exception as e:
@@ -96,10 +119,14 @@ class DataFrameConditionInterpreter:
     
     def _parse_condition_string(self, condition_str: str) -> str:
         """Parse et remplace les références de colonnes par les valeurs"""
+        
         # Pattern pour matcher les références de colonnes avec index optionnel
         # Ex: EMA_50, EMA_50[-1], close[0]
         # Éviter de matcher les nombres purs comme 70 ou 30
         column_pattern = r'([a-zA-Z]\w*(?:_\w+)*)((?:\[[-]?\d+\])?)'
+        
+        # Find all column references to replace
+        matches = list(re.finditer(column_pattern, condition_str))
         
         def replace_column_reference(match):
             column_name = match.group(1)
@@ -115,35 +142,39 @@ class DataFrameConditionInterpreter:
                 if index_match:
                     index = int(index_match.group(1))
                 else:
-                    index = -1  # Dernière valeur par défaut
+                    index = 0
             else:
-                index = -1  # Dernière valeur par défaut
+                index = 0
             
             # Récupérer la valeur
             try:
-                if index < 0:
-                    # Index négatif (compter depuis la fin)
-                    actual_index = len(self.df) + index
+                if index <= 0:
+                    # Index 0 = valeur courante (dernière ligne)
+                    # Index -1 = valeur précédente (avant-dernière ligne)
+                    # Index -2 = deux lignes avant, etc.
+                    actual_index = len(self.df) - 1 + index  # -1 pour last, -2 pour avant-dernière, etc.
                 else:
+                    # Index positif (position absolue)
                     actual_index = index
                 
                 if actual_index < 0 or actual_index >= len(self.df):
-                    return "float('nan')"  # Valeur invalide
+                    return "float('nan')"
                 
                 value = self.df.iloc[actual_index][column_name]
                 
                 if pd.isna(value):
                     return "float('nan')"
                 
-                return str(float(value))
+                float_value = str(float(value))
+                return float_value
                 
-            except (IndexError, KeyError):
+            except Exception as e:
                 return "float('nan')"
         
-        # Remplacer toutes les références de colonnes
+        # Replace column references with values
         parsed = re.sub(column_pattern, replace_column_reference, condition_str)
         
-        # Remplacer les opérateurs logiques
+        # Replace logical operators
         parsed = parsed.replace('&', ' and ')
         parsed = parsed.replace('|', ' or ')
         parsed = parsed.replace('!', ' not ')
@@ -187,7 +218,12 @@ class TradingStrategy:
         
         # Configuration des indicateurs et règles
         self.indicators_config = getattr(config, 'indicators', {})
-        self.signal_rules = getattr(config, 'signal_rules', [])
+        raw_signal_rules = getattr(config, 'signal_rules', [])
+        
+        # Load signal rules from config
+        
+        self.signal_rules = self._convert_signal_rules(raw_signal_rules) if raw_signal_rules else []
+        # Signal rules loaded successfully
         
         # Performance tracking
         initial_balance = getattr(config, 'initial_balance', 100.0)
@@ -205,6 +241,34 @@ class TradingStrategy:
             'errors': 0
         }
         self.indicators_registry = IndicatorRegistry()
+    
+    def _convert_signal_rules(self, raw_signal_rules):
+        """Convertit les règles de signaux du YAML en objets SignalRule"""
+        converted_rules = []
+        
+        # Converting signal rules
+        
+        for i, rule_data in enumerate(raw_signal_rules):
+            try:
+                if isinstance(rule_data, dict):
+                    rule = SignalRule(
+                        name=rule_data.get('name', f'rule_{i}'),
+                        signal_type=rule_data.get('signal_type', 'LONG'),
+                        condition=rule_data.get('condition', ''),
+                        priority=rule_data.get('priority', 1)
+                    )
+                    converted_rules.append(rule)
+                    # Rule converted successfully
+                elif hasattr(rule_data, 'name'):  # Déjà un objet SignalRule
+                    converted_rules.append(rule_data)
+                    # Rule already converted
+                else:
+                    logger.warning(f"Invalid rule data type: {type(rule_data)}")
+            except Exception as e:
+                logger.error(f"Error converting rule {i}: {e}")
+        
+        # Signal rules conversion completed
+        return converted_rules
     
     def _convert_timestamp_to_seconds(self, timestamp: float) -> float:
         """Convert timestamp to seconds, handling milliseconds automatically"""
@@ -243,6 +307,19 @@ class TradingStrategy:
                 timestamp_idx = cols.index('timestamp')
                 cols.insert(timestamp_idx + 1, 'date')
                 self.dataframe = self.dataframe[cols]
+    
+    def _ensure_signal_column(self):
+        """Ensure signal column exists in the DataFrame"""
+        if self.dataframe.empty:
+            return
+        
+        # Check if signal column exists
+        if 'signal' not in self.dataframe.columns:
+            self.dataframe['signal'] = ''
+            
+        # Fill any existing NaN values in signal column with empty string
+        if self.dataframe['signal'].isna().any():
+            self.dataframe['signal'] = self.dataframe['signal'].fillna('')
     
     async def _check_cache_exists(self) -> bool:
         """Vérifie si un cache .feather existe pour cette stratégie"""
@@ -1272,6 +1349,7 @@ class TradingStrategy:
 
                 #await self._publish_signals(signals)
                 self.processing_metrics['signals_generated'] += len(signals)
+                pass
             
             # Métriques finales
             total_time = asyncio.get_event_loop().time() - start_time
@@ -1336,7 +1414,8 @@ class TradingStrategy:
                 'high': float(candle_data.get('high', 0)), 
                 'low': float(candle_data.get('low', 0)),
                 'close': float(candle_data.get('close', 0)),
-                'volume': float(candle_data.get('volume', 0))
+                'volume': float(candle_data.get('volume', 0)),
+                'signal': ''  # Initialiser la colonne signal vide
             }])
             
             # Ajouter au DataFrame
@@ -1349,6 +1428,9 @@ class TradingStrategy:
             
             # Ajouter/mettre à jour la colonne date si elle n'existe pas ou est incomplète
             self._ensure_date_column()
+            
+            # Ajouter/mettre à jour la colonne signal si elle n'existe pas
+            self._ensure_signal_column()
             
             # Limiter la taille
             max_rows = getattr(self.config, 'max_dataframe_size', 10000)
@@ -1663,18 +1745,88 @@ class TradingStrategy:
         """Génère les signaux en utilisant l'interpréteur de conditions"""
         signals = []
         
+        # Starting signal generation
+        
+        # Check if signal rules are configured
+        if not self.signal_rules:
+            return signals
+        
         async with self.dataframe_lock:
-            # Vérifier qu'on a assez de données
+            # Check if we have enough data
             if len(self.dataframe) < 2:
-                logger.debug("Not enough data for signal generation")
                 return signals
             
-            # Évaluer chaque règle avec l'interpréteur
-            for rule in self.signal_rules:
-                try:
-                    interpreter = DataFrameConditionInterpreter(self.dataframe)
+            # DEBUG: Afficher les dernières valeurs du DataFrame pour tous les indicateurs
+            logger.info(f"🔍 DEBUG - DataFrame last row values:")
+            last_row = self.dataframe.iloc[-1]
+            for col in self.dataframe.columns:
+                val = last_row[col]
+                if pd.isna(val):
+                    logger.info(f"  {col}: NaN (missing value)")
+                else:
+                    logger.info(f"  {col}: {val}")
                     
-                    if interpreter.evaluate_condition(rule.condition):
+            if len(self.dataframe) > 1:
+                logger.info(f"🔍 DEBUG - DataFrame previous row values:")
+                prev_row = self.dataframe.iloc[-2]
+                for col in self.dataframe.columns:
+                    val = prev_row[col]
+                    if pd.isna(val):
+                        logger.info(f"  {col}[-2]: NaN (missing value)")
+                    else:
+                        logger.info(f"  {col}[-2]: {val}")
+            
+            # Debug des dernières valeurs spécifiques
+            if 'SHORT' in self.dataframe.columns and 'LONG' in self.dataframe.columns:
+                current_short = self.dataframe['SHORT'].iloc[-1]
+                current_long = self.dataframe['LONG'].iloc[-1]
+                prev_short = self.dataframe['SHORT'].iloc[-2]
+                prev_long = self.dataframe['LONG'].iloc[-2]
+                
+                logger.info(f"🔍 DEBUG - Current values: SHORT={current_short:.2f}, LONG={current_long:.2f}")
+                logger.info(f"🔍 DEBUG - Previous values: SHORT[-1]={prev_short:.2f}, LONG[-1]={prev_long:.2f}")
+            else:
+                logger.warning(f"⚠️ DEBUG - Missing SHORT/LONG columns in DataFrame")
+            
+            # Évaluer chaque règle avec l'interpréteur
+            for i, rule in enumerate(self.signal_rules):
+                try:
+                    logger.info(f"🔍 DEBUG - Evaluating rule {i+1}/{len(self.signal_rules)}: {rule.name}")
+                    logger.info(f"🔍 DEBUG - Rule condition: '{rule.condition}'")
+                    logger.info(f"🔍 DEBUG - Rule signal type: {rule.signal_type}")
+                    logger.info(f"🔍 DEBUG - Rule priority: {rule.priority}")
+                    
+                    interpreter = DataFrameConditionInterpreter(self.dataframe)
+                    logger.info(f"🔍 DEBUG - Available columns in interpreter: {sorted(list(interpreter.available_columns))}")
+                    
+                    # Vérifier les colonnes requises par la condition
+                    import re
+                    column_pattern = r'\b(\w+(?:_\w+)*)'
+                    required_columns = set(re.findall(column_pattern, rule.condition))
+                    # Filtrer les mots-clés et opérateurs
+                    keywords = {'and', 'or', 'not', 'True', 'False'}
+                    required_columns = {col for col in required_columns if col not in keywords and not col.isdigit()}
+                    
+                    logger.info(f"🔍 DEBUG - Columns required by condition: {sorted(list(required_columns))}")
+                    missing_columns = required_columns - interpreter.available_columns
+                    if missing_columns:
+                        logger.warning(f"⚠️ DEBUG - Missing columns for rule '{rule.name}': {sorted(list(missing_columns))}")
+                    
+                    # Debug de la condition parsée
+                    parsed_condition = interpreter._parse_condition_string(rule.condition)
+                    logger.info(f"🔍 DEBUG - Parsed condition: '{parsed_condition}'")
+                    
+                    # Vérifier les valeurs des colonnes utilisées dans la condition
+                    for col in required_columns:
+                        if col in interpreter.available_columns:
+                            current_val = self.dataframe[col].iloc[-1] if len(self.dataframe) > 0 else "N/A"
+                            prev_val = self.dataframe[col].iloc[-2] if len(self.dataframe) > 1 else "N/A"
+                            logger.info(f"🔍 DEBUG - Column {col}: current={current_val}, previous={prev_val}")
+                    
+                    result = interpreter.evaluate_condition(rule.condition)
+                    logger.info(f"🔍 DEBUG - Evaluation result: {result} (type: {type(result)})")
+                    
+                    if result:
                         signal = Signal(
                             id=str(uuid4()),
                             strategy_id=self.config.name,
@@ -1688,7 +1840,11 @@ class TradingStrategy:
                         )
                         signals.append(signal)
                         
-                        logger.info(f"Signal generated: {signal.type} by rule '{rule.name}': {rule.condition}")
+                        # Ajouter le signal au DataFrame dans la colonne "signal"
+                        await self._add_signal_to_dataframe(rule.signal_type)
+                        
+                        logger.info(f"Signal generated: {signal.type} by rule '{rule.name}'")
+                    
                         
                 except Exception as e:
                     logger.error(f"Error evaluating rule '{rule.name}': {e}")
@@ -1702,6 +1858,21 @@ class TradingStrategy:
         
         last_row = self.dataframe.iloc[-1]
         return {k: (v if not pd.isna(v) else None) for k, v in last_row.to_dict().items()}
+    
+    async def _add_signal_to_dataframe(self, signal_type: str):
+        """Ajoute un signal à la colonne 'signal' du DataFrame"""
+        try:
+            # Create signal column if it doesn't exist
+            if 'signal' not in self.dataframe.columns:
+                self.dataframe['signal'] = ''
+            
+            # Mark the last row with signal type
+            if not self.dataframe.empty:
+                last_index = self.dataframe.index[-1]
+                self.dataframe.loc[last_index, 'signal'] = signal_type
+            
+        except Exception as e:
+            logger.error(f"Error adding signal to DataFrame: {e}")
     
     async def _publish_signals(self, signals: List[Signal]):
         """Publie les signaux vers le service d'ordres"""

@@ -352,8 +352,11 @@ class TradingGUI(QMainWindow):
         
         self.force_checkbox = QCheckBox("Force (no confirmation)")
         
-        start_session_btn = QPushButton("▶️ Start Session")
-        start_session_btn.clicked.connect(self.start_session)
+        update_session_btn = QPushButton("🔄 Update Session")
+        update_session_btn.clicked.connect(self.update_session)
+        
+        restart_session_btn = QPushButton("🔁 Restart Session")
+        restart_session_btn.clicked.connect(self.restart_session)
         
         open_session_btn = QPushButton("📂 Open Session")
         open_session_btn.clicked.connect(self.open_session)
@@ -365,9 +368,10 @@ class TradingGUI(QMainWindow):
         session_layout.addLayout(combo_layout)
         session_layout.addWidget(self.force_checkbox)
         
-        # Layout horizontal pour les boutons Start/Open/Stop
+        # Layout horizontal pour les boutons Update/Restart/Open/Stop
         buttons_layout = QHBoxLayout()
-        buttons_layout.addWidget(start_session_btn)
+        buttons_layout.addWidget(update_session_btn)
+        buttons_layout.addWidget(restart_session_btn)
         buttons_layout.addWidget(open_session_btn)
         buttons_layout.addWidget(stop_session_btn)
         session_layout.addLayout(buttons_layout)
@@ -384,14 +388,14 @@ class TradingGUI(QMainWindow):
         parent.addWidget(command_widget)
         
     def setup_data_panel(self, parent):
-        """Panel de droite avec logs et données"""
-        data_widget = QTabWidget()
+        """Panel de droite avec logs et données - onglets sessions au niveau principal"""
+        self.main_tab_widget = QTabWidget()
         
         # Tab Logs
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setFont(QFont("Consolas", 9))
-        data_widget.addTab(self.log_text, "📋 Logs")
+        self.main_tab_widget.addTab(self.log_text, "📋 Logs")
         
         # Tab Métriques
         metrics_widget = QWidget()
@@ -402,9 +406,9 @@ class TradingGUI(QMainWindow):
         self.metrics_table.setHorizontalHeaderLabels(["Métrique", "Valeur"])
         
         metrics_layout.addWidget(self.metrics_table)
-        data_widget.addTab(metrics_widget, "📊 Métriques")
+        self.main_tab_widget.addTab(metrics_widget, "📊 Métriques")
         
-        # Tab Sessions
+        # Tab Sessions (liste/gestion)
         sessions_widget = QWidget()
         sessions_layout = QVBoxLayout(sessions_widget)
         
@@ -413,38 +417,16 @@ class TradingGUI(QMainWindow):
         self.sessions_table.setHorizontalHeaderLabels(["ID", "Nom", "Status", "Mode"])
         
         sessions_layout.addWidget(self.sessions_table)
-        data_widget.addTab(sessions_widget, "🎯 Sessions")
+        self.main_tab_widget.addTab(sessions_widget, "🎯 Sessions")
         
-        # Tab Stratégies (dynamique selon la session)
-        self.setup_strategies_tab(data_widget)
+        # Les onglets des sessions seront ajoutés dynamiquement au niveau principal
         
-        parent.addWidget(data_widget)
-    
-    def setup_strategies_tab(self, parent_tab_widget):
-        """Configure les onglets de stratégies (créés dynamiquement)"""
-        # Container pour les onglets de stratégies
-        self.strategies_tab_widget = QTabWidget()
+        parent.addWidget(self.main_tab_widget)
         
-        # Message par défaut quand aucune session n'est chargée
-        default_widget = QWidget()
-        default_layout = QVBoxLayout(default_widget)
-        
-        default_label = QLabel("🎯 Sélectionnez une session pour voir les stratégies\n\n"
-                              "📂 Open Session → Charge les stratégies automatiquement\n"
-                              "▶️ Start Session → Met à jour les données en temps réel")
-        default_label.setAlignment(Qt.AlignCenter)
-        default_label.setFont(QFont("Arial", 12))
-        default_label.setStyleSheet("color: #666; padding: 40px;")
-        
-        default_layout.addWidget(default_label)
-        self.strategies_tab_widget.addTab(default_widget, "ℹ️ Info")
-        
-        # Ajouter l'onglet principal
-        parent_tab_widget.addTab(self.strategies_tab_widget, "🎯 Stratégies")
-        
-        # Registre des stratégies chargées
+        # Registre des stratégies chargées  
         self.loaded_strategies = {}
         self.strategy_dataframes = {}
+    
         
     def setup_status_bar(self):
         """Configure la barre de statut"""
@@ -512,8 +494,8 @@ class TradingGUI(QMainWindow):
         self.command_input.setText(command)
         self.execute_command()
         
-    def start_session(self):
-        """Démarre une session"""
+    def update_session(self):
+        """Met à jour une session depuis la dernière sauvegarde"""
         session_text = self.session_combo.currentText().strip()
         if not session_text:
             QMessageBox.warning(self, "Erreur", "Veuillez saisir un ID de session")
@@ -528,7 +510,44 @@ class TradingGUI(QMainWindow):
         if self.force_checkbox.isChecked():
             command += " --force"
             
-        self.append_log(f"🚀 Démarrage de la session '{session_id}'...")
+        self.append_log(f"🔄 Mise à jour de la session '{session_id}' depuis la dernière sauvegarde...")
+        self.execute_quick_command(command)
+    
+    def restart_session(self):
+        """Redémarre une session depuis le début en supprimant le cache"""
+        session_text = self.session_combo.currentText().strip()
+        if not session_text:
+            QMessageBox.warning(self, "Erreur", "Veuillez saisir un ID de session")
+            return
+        
+        # Retirer le préfixe emoji si présent
+        session_id = session_text
+        if session_text.startswith(('📋 ', '🎯 ')):
+            session_id = session_text.split(' ', 1)[1]
+        
+        # Demander confirmation car c'est destructeur
+        reply = QMessageBox.question(
+            self, 
+            "Confirmation Restart", 
+            f"⚠️ Êtes-vous sûr de vouloir redémarrer complètement la session '{session_id}' ?\n\n"
+            "Cette action va :\n"
+            "• Supprimer toutes les sauvegardes existantes\n"
+            "• Recalculer tous les indicateurs depuis start_date\n"
+            "• Perdre l'historique de progression\n\n"
+            "Cette opération est irréversible.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+            
+        # Ajouter l'option --restart pour supprimer le cache
+        command = f"session start {session_id} --restart"
+        if self.force_checkbox.isChecked():
+            command += " --force"
+            
+        self.append_log(f"🔁 Redémarrage complet de la session '{session_id}' depuis start_date...")
         self.execute_quick_command(command)
     
     def open_session(self):
@@ -669,7 +688,7 @@ class TradingGUI(QMainWindow):
                          "© 2025")
     
     def load_strategies_for_session(self, session_id: str):
-        """Charge toutes les stratégies pour une session donnée"""
+        """Charge une session comme onglet principal avec ses stratégies"""
         try:
             # Obtenir les stratégies depuis la configuration
             strategies = self.get_strategies_for_session(session_id)
@@ -678,18 +697,41 @@ class TradingGUI(QMainWindow):
                 self.append_log(f"📊 Aucune stratégie trouvée pour la session {session_id}")
                 return
             
-            # Nettoyer les anciens onglets (sauf le premier "Info")
-            while self.strategies_tab_widget.count() > 1:
-                self.strategies_tab_widget.removeTab(1)
+            # Supprimer l'onglet session s'il existe déjà
+            self.remove_session_tab(session_id)
             
-            # Créer un onglet pour chaque stratégie
+            # Créer l'onglet session au niveau principal
+            session_tab_widget = QTabWidget()
+            
+            # Créer un sous-onglet pour chaque stratégie
             for strategy_id in strategies:
-                self.create_strategy_tab(session_id, strategy_id)
+                strategy_widget = self.create_strategy_subtab(session_id, strategy_id)
+                session_tab_widget.addTab(strategy_widget, f"📊 {strategy_id}")
             
-            self.append_log(f"🎯 {len(strategies)} stratégies chargées: {', '.join(strategies)}")
+            # Ajouter l'onglet session au widget principal
+            tab_title = f"🎯 {session_id}"
+            self.main_tab_widget.addTab(session_tab_widget, tab_title)
+            
+            # Activer automatiquement l'onglet de la session
+            session_index = self.main_tab_widget.count() - 1
+            self.main_tab_widget.setCurrentIndex(session_index)
+            
+            self.append_log(f"🎯 Session {session_id} chargée avec {len(strategies)} stratégies: {', '.join(strategies)}")
             
         except Exception as e:
-            self.append_log(f"❌ Erreur chargement stratégies: {e}")
+            self.append_log(f"❌ Erreur chargement session {session_id}: {e}")
+    
+    def remove_session_tab(self, session_id: str):
+        """Supprime l'onglet d'une session s'il existe"""
+        try:
+            tab_title = f"🎯 {session_id}"
+            for i in range(self.main_tab_widget.count()):
+                if self.main_tab_widget.tabText(i) == tab_title:
+                    self.main_tab_widget.removeTab(i)
+                    self.append_log(f"🗑️ Onglet session {session_id} supprimé")
+                    break
+        except Exception as e:
+            self.append_log(f"❌ Erreur suppression onglet {session_id}: {e}")
     
     def get_strategies_for_session(self, session_id: str) -> List[str]:
         """Récupère la liste des stratégies pour une session"""
@@ -727,10 +769,10 @@ class TradingGUI(QMainWindow):
             self.append_log(f"❌ Erreur get_strategies_for_session: {e}")
             return [session_id]  # Fallback
     
-    def create_strategy_tab(self, session_id: str, strategy_id: str):
-        """Crée un onglet pour une stratégie avec ses sous-onglets"""
+    def create_strategy_subtab(self, session_id: str, strategy_id: str):
+        """Crée le widget pour une stratégie avec ses sous-onglets"""
         try:
-            # Container principal pour la stratégie
+            # Container pour les onglets de la stratégie
             strategy_widget = QTabWidget()
             
             # Sous-onglet DataFrame
@@ -740,7 +782,7 @@ class TradingGUI(QMainWindow):
             # Sous-onglet Chart (placeholder pour l'instant)
             chart_tab = QWidget()
             chart_layout = QVBoxLayout(chart_tab)
-            chart_label = QLabel(f"📊 Chart pour {strategy_id}\\n\\n(À implémenter)")
+            chart_label = QLabel(f"📊 Chart pour {strategy_id}\n\n(À implémenter)")
             chart_label.setAlignment(Qt.AlignCenter)
             chart_label.setStyleSheet("color: #666; padding: 40px;")
             chart_layout.addWidget(chart_label)
@@ -749,24 +791,29 @@ class TradingGUI(QMainWindow):
             # Sous-onglet Portfolio (placeholder pour l'instant)
             portfolio_tab = QWidget()
             portfolio_layout = QVBoxLayout(portfolio_tab)
-            portfolio_label = QLabel(f"💼 Portfolio pour {strategy_id}\\n\\n(À implémenter)")
+            portfolio_label = QLabel(f"💼 Portfolio pour {strategy_id}\n\n(À implémenter)")
             portfolio_label.setAlignment(Qt.AlignCenter)
             portfolio_label.setStyleSheet("color: #666; padding: 40px;")
             portfolio_layout.addWidget(portfolio_label)
             strategy_widget.addTab(portfolio_tab, "💼 Portfolio")
             
-            # Ajouter l'onglet de stratégie au container principal
-            self.strategies_tab_widget.addTab(strategy_widget, f"🎯 {strategy_id}")
+            # Sous-onglet Config
+            config_tab = self.create_config_subtab(session_id, strategy_id)
+            strategy_widget.addTab(config_tab, "⚙️ Config")
             
             # Mémoriser pour références futures
             self.loaded_strategies[strategy_id] = {
                 'session_id': session_id,
                 'widget': strategy_widget,
-                'dataframe_tab': dataframe_tab
+                'dataframe_tab': dataframe_tab,
+                'config_tab': config_tab
             }
             
+            return strategy_widget
+            
         except Exception as e:
-            self.append_log(f"❌ Erreur création onglet stratégie {strategy_id}: {e}")
+            self.append_log(f"❌ Erreur création widget stratégie {strategy_id}: {e}")
+            return QWidget()  # Widget vide en cas d'erreur
     
     def create_dataframe_subtab(self, session_id: str, strategy_id: str):
         """Crée le sous-onglet DataFrame pour une stratégie"""
@@ -789,13 +836,35 @@ class TradingGUI(QMainWindow):
         
         dataframe_layout.addLayout(info_layout)
         
+        # Contrôles de pagination
+        pagination_layout = QHBoxLayout()
+        
+        prev_btn = QPushButton("◀ Page précédente")
+        prev_btn.clicked.connect(lambda: self.goto_previous_page(strategy_id))
+        
+        page_label = QLabel("Page 1 / 1")
+        page_label.setAlignment(Qt.AlignCenter)
+        page_label.setFont(QFont("Arial", 10, QFont.Bold))
+        
+        next_btn = QPushButton("Page suivante ▶")
+        next_btn.clicked.connect(lambda: self.goto_next_page(strategy_id))
+        
+        pagination_layout.addWidget(prev_btn)
+        pagination_layout.addWidget(page_label)
+        pagination_layout.addWidget(next_btn)
+        
+        dataframe_layout.addLayout(pagination_layout)
+        
         # Table pour afficher la DataFrame
         dataframe_table = QTableWidget()
         dataframe_table.setAlternatingRowColors(True)
         dataframe_table.setSelectionBehavior(QTableWidget.SelectRows)
+        dataframe_table.setSelectionMode(QTableWidget.SingleSelection)
         dataframe_table.setSortingEnabled(True)
         dataframe_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         dataframe_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # Activer le scroll par pixel pour plus de fluidité
+        dataframe_table.setVerticalScrollMode(QTableWidget.ScrollPerPixel)
         
         dataframe_layout.addWidget(dataframe_table)
         
@@ -803,15 +872,232 @@ class TradingGUI(QMainWindow):
         self.strategy_dataframes[strategy_id] = {
             'table': dataframe_table,
             'info_label': info_label,
+            'page_label': page_label,
+            'prev_btn': prev_btn,
+            'next_btn': next_btn,
             'session_id': session_id,
             'file_path': None,
-            'last_mtime': None
+            'last_mtime': None,
+            'current_page': 1,
+            'total_pages': 1,
+            'page_size': 500,
+            'full_dataframe': None
         }
         
         # Charger immédiatement la DataFrame si elle existe
         self.load_dataframe_for_strategy(session_id, strategy_id)
         
         return dataframe_widget
+    
+    def create_config_subtab(self, session_id: str, strategy_id: str):
+        """Crée le sous-onglet Config pour une stratégie"""
+        config_widget = QWidget()
+        config_layout = QVBoxLayout(config_widget)
+        
+        # Titre et boutons
+        header_layout = QHBoxLayout()
+        
+        config_label = QLabel(f"⚙️ Configuration - {strategy_id}")
+        config_label.setFont(QFont("Arial", 12, QFont.Bold))
+        
+        refresh_config_btn = QPushButton("🔄 Actualiser")
+        refresh_config_btn.setMaximumWidth(100)
+        refresh_config_btn.clicked.connect(lambda: self.refresh_strategy_config(strategy_id))
+        
+        edit_config_btn = QPushButton("✏️ Éditer")
+        edit_config_btn.setMaximumWidth(100)
+        edit_config_btn.setCheckable(True)
+        edit_config_btn.clicked.connect(lambda: self.toggle_config_edit_mode(strategy_id))
+        
+        save_config_btn = QPushButton("💾 Sauvegarder")
+        save_config_btn.setMaximumWidth(100)
+        save_config_btn.setEnabled(False)  # Désactivé par défaut
+        save_config_btn.clicked.connect(lambda: self.save_strategy_config(strategy_id))
+        
+        header_layout.addWidget(config_label)
+        header_layout.addStretch()
+        header_layout.addWidget(refresh_config_btn)
+        header_layout.addWidget(edit_config_btn)
+        header_layout.addWidget(save_config_btn)
+        
+        config_layout.addLayout(header_layout)
+        
+        # Éditeur de configuration (JSON/YAML)
+        self.config_editors = getattr(self, 'config_editors', {})
+        
+        config_editor = QTextEdit()
+        config_editor.setFont(QFont("Consolas", 10))
+        config_editor.setLineWrapMode(QTextEdit.NoWrap)
+        config_editor.setReadOnly(True)  # Lecture seule par défaut
+        
+        # Appliquer le style sombre par défaut
+        config_editor.setStyleSheet("""
+            QTextEdit { 
+                background-color: #3a3a3a; 
+                color: #c0c0c0; 
+                border: 1px solid #555; 
+            }
+        """)
+        
+        # Charger la configuration de la stratégie
+        self.load_strategy_config(strategy_id, config_editor)
+        
+        config_layout.addWidget(config_editor)
+        
+        # Informations de statut
+        status_layout = QHBoxLayout()
+        
+        config_status = QLabel("📄 Configuration chargée depuis trading_config.yaml")
+        config_status.setStyleSheet("color: #666; font-size: 10px;")
+        
+        last_modified = QLabel("Dernière modification: --")
+        last_modified.setStyleSheet("color: #666; font-size: 10px;")
+        
+        status_layout.addWidget(config_status)
+        status_layout.addStretch()
+        status_layout.addWidget(last_modified)
+        
+        config_layout.addLayout(status_layout)
+        
+        # Stocker les références
+        self.config_editors[strategy_id] = {
+            'editor': config_editor,
+            'edit_btn': edit_config_btn,
+            'save_btn': save_config_btn,
+            'status_label': config_status,
+            'modified_label': last_modified
+        }
+        
+        return config_widget
+    
+    def load_strategy_config(self, strategy_id: str, config_editor: QTextEdit):
+        """Charge la configuration d'une stratégie dans l'éditeur"""
+        try:
+            if hasattr(self, 'config_data') and self.config_data:
+                strategies = self.config_data.get('strategies', {})
+                strategy_config = strategies.get(strategy_id, {})
+                
+                if strategy_config:
+                    # Convertir en YAML pour l'affichage
+                    import yaml
+                    yaml_content = yaml.dump(strategy_config, default_flow_style=False, indent=2, allow_unicode=True)
+                    config_editor.setPlainText(yaml_content)
+                    self.append_log(f"⚙️ Configuration {strategy_id} chargée")
+                else:
+                    config_editor.setPlainText(f"# Configuration pour {strategy_id}\n# Aucune configuration trouvée dans trading_config.yaml")
+                    self.append_log(f"⚠️ Aucune configuration trouvée pour {strategy_id}")
+            else:
+                config_editor.setPlainText(f"# Configuration pour {strategy_id}\n# Erreur: Impossible de charger trading_config.yaml")
+                self.append_log(f"❌ Impossible de charger la configuration")
+                
+        except Exception as e:
+            config_editor.setPlainText(f"# Erreur de chargement de la configuration\n# {str(e)}")
+            self.append_log(f"❌ Erreur chargement config {strategy_id}: {e}")
+    
+    def refresh_strategy_config(self, strategy_id: str):
+        """Actualise la configuration d'une stratégie"""
+        try:
+            if strategy_id in self.config_editors:
+                config_editor = self.config_editors[strategy_id]['editor']
+                
+                # Recharger le fichier de config
+                self.load_config()
+                
+                # Recharger dans l'éditeur
+                self.load_strategy_config(strategy_id, config_editor)
+                
+                # Mettre à jour le timestamp
+                from datetime import datetime
+                self.config_editors[strategy_id]['modified_label'].setText(f"Actualisé: {datetime.now().strftime('%H:%M:%S')}")
+                
+                self.append_log(f"🔄 Configuration {strategy_id} actualisée")
+                
+        except Exception as e:
+            self.append_log(f"❌ Erreur actualisation config {strategy_id}: {e}")
+    
+    def save_strategy_config(self, strategy_id: str):
+        """Sauvegarde la configuration d'une stratégie"""
+        try:
+            if strategy_id in self.config_editors:
+                config_editor = self.config_editors[strategy_id]['editor']
+                yaml_content = config_editor.toPlainText()
+                
+                # Parser le YAML
+                import yaml
+                try:
+                    parsed_config = yaml.safe_load(yaml_content)
+                    
+                    # Mettre à jour la configuration en mémoire
+                    if hasattr(self, 'config_data') and self.config_data:
+                        if 'strategies' not in self.config_data:
+                            self.config_data['strategies'] = {}
+                        self.config_data['strategies'][strategy_id] = parsed_config
+                        
+                        # Sauvegarder dans le fichier
+                        config_file = "config/trading_config.yaml"
+                        with open(config_file, 'w', encoding='utf-8') as f:
+                            yaml.dump(self.config_data, f, default_flow_style=False, indent=2, allow_unicode=True)
+                        
+                        # Mettre à jour le statut
+                        from datetime import datetime
+                        self.config_editors[strategy_id]['status_label'].setText("💾 Configuration sauvegardée")
+                        self.config_editors[strategy_id]['modified_label'].setText(f"Sauvegardé: {datetime.now().strftime('%H:%M:%S')}")
+                        
+                        self.append_log(f"💾 Configuration {strategy_id} sauvegardée")
+                    else:
+                        self.append_log(f"❌ Impossible de sauvegarder - config_data non disponible")
+                        
+                except yaml.YAMLError as e:
+                    self.append_log(f"❌ Erreur YAML dans la configuration {strategy_id}: {e}")
+                    self.config_editors[strategy_id]['status_label'].setText(f"❌ Erreur YAML: {str(e)}")
+                    
+        except Exception as e:
+            self.append_log(f"❌ Erreur sauvegarde config {strategy_id}: {e}")
+    
+    def toggle_config_edit_mode(self, strategy_id: str):
+        """Active/désactive le mode édition pour la configuration"""
+        try:
+            if strategy_id in self.config_editors:
+                editor_refs = self.config_editors[strategy_id]
+                config_editor = editor_refs['editor']
+                edit_btn = editor_refs['edit_btn']
+                save_btn = editor_refs['save_btn']
+                status_label = editor_refs['status_label']
+                
+                if edit_btn.isChecked():
+                    # Activer le mode édition - Mode sombre avec accent
+                    config_editor.setReadOnly(False)
+                    config_editor.setStyleSheet("""
+                        QTextEdit { 
+                            background-color: #2b2b2b; 
+                            color: #e8e8e8; 
+                            border: 2px solid #ffa500; 
+                            selection-background-color: #4a4a4a;
+                        }
+                    """)
+                    edit_btn.setText("🔒 Verrouiller")
+                    save_btn.setEnabled(True)
+                    status_label.setText("✏️ Mode édition activé - Modifications possibles")
+                    status_label.setStyleSheet("color: #ff8c00; font-size: 10px; font-weight: bold;")
+                    self.append_log(f"✏️ Mode édition activé pour {strategy_id}")
+                else:
+                    # Désactiver le mode édition - Mode sombre lecture seule
+                    config_editor.setReadOnly(True)
+                    config_editor.setStyleSheet("""
+                        QTextEdit { 
+                            background-color: #3a3a3a; 
+                            color: #c0c0c0; 
+                            border: 1px solid #555; 
+                        }
+                    """)
+                    edit_btn.setText("✏️ Éditer")
+                    save_btn.setEnabled(False)
+                    status_label.setText("📄 Configuration en lecture seule")
+                    status_label.setStyleSheet("color: #666; font-size: 10px;")
+                    self.append_log(f"🔒 Mode lecture seule pour {strategy_id}")
+                    
+        except Exception as e:
+            self.append_log(f"❌ Erreur toggle edit mode {strategy_id}: {e}")
     
     def refresh_strategy_dataframe(self, session_id: str, strategy_id: str):
         """Actualise la DataFrame d'une stratégie spécifique"""
@@ -891,91 +1177,272 @@ class TradingGUI(QMainWindow):
                 self.strategy_dataframes[strategy_id]['info_label'].setText(f"❌ Erreur: {str(e)}")
             self.append_log(f"❌ Erreur chargement DataFrame {strategy_id}: {e}")
     
-    def display_dataframe_for_strategy(self, df, file_path: str, session_id: str, strategy_id: str):
-        """Affiche la DataFrame dans la table d'une stratégie spécifique"""
+    def filter_dataframe_by_start_date(self, df, strategy_id: str):
+        """Filtre la DataFrame selon start_date de la config"""
         try:
-            self.append_log(f"🎨 Début affichage DataFrame pour {strategy_id}")
-            self.append_log(f"📊 DataFrame shape: {df.shape}")
-            self.append_log(f"📋 Colonnes: {list(df.columns)}")
+            # Récupérer start_date de la config
+            if hasattr(self, 'config_data') and self.config_data:
+                strategies = self.config_data.get('strategies', {})
+                strategy_config = strategies.get(strategy_id, {})
+                start_date_str = strategy_config.get('start_date', '2025-01-01')
+            else:
+                start_date_str = '2025-01-01'  # Défaut
+            
+            self.append_log(f"📅 Filtrage depuis: {start_date_str}")
+            
+            # Convertir start_date en timestamp si la colonne date existe
+            if 'date' in df.columns:
+                import pandas as pd
+                from datetime import datetime
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+                
+                # Filtrer la DataFrame
+                df['date_parsed'] = pd.to_datetime(df['date'])
+                filtered_df = df[df['date_parsed'] >= start_date].copy()
+                filtered_df = filtered_df.drop('date_parsed', axis=1)  # Nettoyer
+                
+                self.append_log(f"📊 Filtrage: {len(df)} → {len(filtered_df)} lignes")
+                return filtered_df
+            else:
+                self.append_log(f"⚠️ Colonne 'date' introuvable - pas de filtrage")
+                return df
+                
+        except Exception as e:
+            self.append_log(f"❌ Erreur filtrage start_date: {e}")
+            return df
+    
+    def populate_table_data_fast(self, table, df):
+        """Version ultra-optimisée du remplissage de table"""
+        try:
+            self.append_log(f"⚡ Remplissage rapide: {len(df)} lignes")
+            
+            # Désactiver tous les updates pendant le remplissage
+            table.setUpdatesEnabled(False)
+            table.setSortingEnabled(False)
+            
+            try:
+                # Remplissage par gros batch et sans formatage complexe
+                batch_size = 500  # Plus gros batch
+                
+                for start_row in range(0, len(df), batch_size):
+                    end_row = min(start_row + batch_size, len(df))
+                    
+                    for row in range(start_row, end_row):
+                        for col in range(len(df.columns)):
+                            value = df.iloc[row, col]
+                            
+                            # Formatage minimaliste pour la vitesse
+                            if pd.isna(value):
+                                display_value = ""
+                            elif isinstance(value, float):
+                                display_value = f"{value:.2f}"
+                            else:
+                                display_value = str(value)
+                            
+                            item = QTableWidgetItem(display_value)
+                            table.setItem(row, col, item)
+                    
+                    # Mini pause tous les 500 lignes
+                    if start_row % 1000 == 0:
+                        from PySide6.QtWidgets import QApplication
+                        QApplication.processEvents()
+                        
+            finally:
+                # Réactiver
+                table.setUpdatesEnabled(True)
+                table.setSortingEnabled(True)
+            
+            self.append_log(f"✅ Remplissage terminé")
+                
+        except Exception as e:
+            table.setUpdatesEnabled(True)
+            table.setSortingEnabled(True)
+            self.append_log(f"❌ Erreur remplissage rapide: {e}")
+    
+    def display_dataframe_for_strategy(self, df, file_path: str, session_id: str, strategy_id: str):
+        """Initialise la pagination et affiche la première page"""
+        try:
+            self.append_log(f"🎨 Initialisation pagination pour {strategy_id}")
+            self.append_log(f"📊 DataFrame brute: {df.shape}")
             
             if strategy_id not in self.strategy_dataframes:
-                self.append_log(f"❌ Strategy {strategy_id} not found in strategy_dataframes registry")
+                self.append_log(f"❌ Strategy {strategy_id} not found")
                 return
                 
             strategy_data = self.strategy_dataframes[strategy_id]
-            table = strategy_data['table']
-            info_label = strategy_data['info_label']
             
-            self.append_log(f"✅ Strategy data found, table widget: {type(table)}")
+            # Filtrer selon start_date de la config
+            filtered_df = self.filter_dataframe_by_start_date(df, strategy_id)
+            self.append_log(f"📅 DataFrame filtrée: {filtered_df.shape} (selon start_date)")
+            
+            # Stocker la DataFrame complète et calculer la pagination
+            strategy_data['full_dataframe'] = filtered_df
+            page_size = strategy_data['page_size']
+            total_pages = (len(filtered_df) + page_size - 1) // page_size  # Ceil division
+            strategy_data['total_pages'] = max(1, total_pages)
+            strategy_data['current_page'] = 1
             
             # Mettre à jour les informations
             file_name = os.path.basename(file_path)
             last_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
-            info_label.setText(
-                f"📈 {strategy_id} | {file_name} | {len(df)} lignes × {len(df.columns)} colonnes | {last_modified.strftime('%H:%M:%S')}"
+            strategy_data['info_label'].setText(
+                f"📈 {strategy_id} | {file_name} | {len(filtered_df)} lignes × {len(filtered_df.columns)} colonnes | {last_modified.strftime('%H:%M:%S')}"
             )
-            
-            # Limiter l'affichage pour les performances
-            display_df = df.tail(1000) if len(df) > 1000 else df
-            self.append_log(f"📊 Display DataFrame: {len(display_df)} lignes × {len(display_df.columns)} colonnes")
-            
-            # Configurer la table
-            table.setRowCount(len(display_df))
-            table.setColumnCount(len(display_df.columns))
-            table.setHorizontalHeaderLabels([str(col) for col in display_df.columns])
-            self.append_log(f"🔧 Table configurée: {table.rowCount()} lignes × {table.columnCount()} colonnes")
-            
-            # Remplir les données
-            self.append_log(f"📝 Début remplissage table...")
-            for row in range(len(display_df)):
-                for col in range(len(display_df.columns)):
-                    value = display_df.iloc[row, col]
-                    
-                    # Formatage des valeurs selon le type de colonne
-                    column_name = display_df.columns[col]
-                    
-                    if pd.isna(value):
-                        display_value = "NaN"
-                    elif column_name == 'timestamp':
-                        # Afficher timestamp comme entier
-                        display_value = str(int(value)) if isinstance(value, (int, float)) else str(value)
-                    elif column_name == 'date':
-                        # Date déjà formatée, afficher telle quelle
-                        display_value = str(value)
-                    elif column_name in ['open', 'high', 'low', 'close']:
-                        # Prix avec 2 décimales
-                        display_value = f"{float(value):.2f}" if isinstance(value, (int, float)) else str(value)
-                    elif column_name == 'volume':
-                        # Volume avec 3 décimales
-                        display_value = f"{float(value):.3f}" if isinstance(value, (int, float)) else str(value)
-                    elif isinstance(value, float):
-                        # Autres valeurs numériques avec 6 décimales (indicateurs)
-                        display_value = f"{value:.6f}"
-                    else:
-                        display_value = str(value)
-                    
-                    item = QTableWidgetItem(display_value)
-                    table.setItem(row, col, item)
-            
-            self.append_log(f"✅ Table remplie: {len(display_df)} lignes × {len(display_df.columns)} colonnes")
-            
-            # Ajuster les colonnes
-            table.resizeColumnsToContents()
-            self.append_log(f"🔧 Colonnes ajustées")
             
             # Mémoriser le chemin et mtime
             strategy_data['file_path'] = file_path
             strategy_data['last_mtime'] = os.path.getmtime(file_path)
             
-            if len(df) > 1000:
-                self.append_log(f"📊 {strategy_id}: Affichage limité aux 1000 dernières lignes (total: {len(df)})")
+            # Afficher la première page (les plus récentes)
+            self.display_current_page(strategy_id)
             
-            self.append_log(f"🎉 DataFrame {strategy_id} affiché avec succès!")
-                
+            self.append_log(f"✅ Pagination initialisée: {total_pages} pages de {page_size} lignes")
+            
         except Exception as e:
-            self.append_log(f"❌ Erreur affichage DataFrame {strategy_id}: {e}")
+            self.append_log(f"❌ Erreur initialisation DataFrame {strategy_id}: {e}")
             import traceback
             self.append_log(f"📝 Traceback: {traceback.format_exc()}")
+    
+    def display_current_page(self, strategy_id: str):
+        """Affiche la page courante"""
+        try:
+            if strategy_id not in self.strategy_dataframes:
+                return
+                
+            strategy_data = self.strategy_dataframes[strategy_id]
+            full_df = strategy_data['full_dataframe']
+            current_page = strategy_data['current_page']
+            page_size = strategy_data['page_size']
+            total_pages = strategy_data['total_pages']
+            table = strategy_data['table']
+            
+            if full_df is None:
+                return
+            
+            # Calculer les indices pour la page courante
+            # Page 1 = les 500 dernières lignes, Page 2 = les 500 d'avant, etc.
+            total_rows = len(full_df)
+            end_idx = total_rows - (current_page - 1) * page_size
+            start_idx = max(0, end_idx - page_size)
+            
+            page_df = full_df.iloc[start_idx:end_idx].copy()
+            
+            self.append_log(f"📄 Page {current_page}/{total_pages}: lignes {start_idx}-{end_idx-1}")
+            
+            # Configurer la table
+            table.setRowCount(len(page_df))
+            table.setColumnCount(len(page_df.columns))
+            table.setHorizontalHeaderLabels([str(col) for col in page_df.columns])
+            
+            # Remplir rapidement
+            self.populate_table_data_fast(table, page_df)
+            
+            # Ajuster les colonnes
+            table.resizeColumnsToContents()
+            
+            # Mettre à jour les contrôles de pagination
+            strategy_data['page_label'].setText(f"Page {current_page} / {total_pages}")
+            strategy_data['prev_btn'].setEnabled(current_page < total_pages)  # Peut aller vers le passé
+            strategy_data['next_btn'].setEnabled(current_page > 1)  # Peut revenir vers le présent
+            
+            # Sélectionner la dernière ligne (plus récente) sur la page 1
+            if current_page == 1 and table.rowCount() > 0:
+                from PySide6.QtCore import QTimer
+                def select_last_row():
+                    last_row = table.rowCount() - 1
+                    table.selectRow(last_row)
+                    table.scrollToBottom()
+                
+                QTimer.singleShot(100, select_last_row)
+            
+        except Exception as e:
+            self.append_log(f"❌ Erreur affichage page {strategy_id}: {e}")
+    
+    def goto_previous_page(self, strategy_id: str):
+        """Aller à la page précédente (plus ancienne)"""
+        try:
+            if strategy_id not in self.strategy_dataframes:
+                return
+                
+            strategy_data = self.strategy_dataframes[strategy_id]
+            if strategy_data['current_page'] < strategy_data['total_pages']:
+                strategy_data['current_page'] += 1
+                self.display_current_page(strategy_id)
+                self.append_log(f"◀ {strategy_id}: Page {strategy_data['current_page']} (vers le passé)")
+                
+        except Exception as e:
+            self.append_log(f"❌ Erreur navigation précédente {strategy_id}: {e}")
+    
+    def goto_next_page(self, strategy_id: str):
+        """Aller à la page suivante (plus récente)"""
+        try:
+            if strategy_id not in self.strategy_dataframes:
+                return
+                
+            strategy_data = self.strategy_dataframes[strategy_id]
+            if strategy_data['current_page'] > 1:
+                strategy_data['current_page'] -= 1
+                self.display_current_page(strategy_id)
+                self.append_log(f"▶ {strategy_id}: Page {strategy_data['current_page']} (vers le présent)")
+                
+        except Exception as e:
+            self.append_log(f"❌ Erreur navigation suivante {strategy_id}: {e}")
+    
+    
+    def populate_table_data(self, table, display_df):
+        """Remplit la table avec les données formatées (optimisé pour performance)"""
+        try:
+            self.append_log(f"📝 Début remplissage table optimisé...")
+            
+            # Désactiver les updates pendant le remplissage pour améliorer les performances
+            table.setUpdatesEnabled(False)
+            
+            try:
+                # Remplissage par batch pour éviter le blocage UI
+                from PySide6.QtWidgets import QApplication
+                batch_size = 100  # Traiter par batch de 100 lignes
+                
+                for start_row in range(0, len(display_df), batch_size):
+                    end_row = min(start_row + batch_size, len(display_df))
+                    
+                    for row in range(start_row, end_row):
+                        for col in range(len(display_df.columns)):
+                            value = display_df.iloc[row, col]
+                            
+                            # Formatage des valeurs selon le type de colonne
+                            column_name = display_df.columns[col]
+                            
+                            if pd.isna(value):
+                                display_value = "NaN"
+                            elif column_name == 'timestamp':
+                                display_value = str(int(value)) if isinstance(value, (int, float)) else str(value)
+                            elif column_name == 'date':
+                                display_value = str(value)
+                            elif column_name in ['open', 'high', 'low', 'close']:
+                                display_value = f"{float(value):.2f}" if isinstance(value, (int, float)) else str(value)
+                            elif column_name == 'volume':
+                                display_value = f"{float(value):.3f}" if isinstance(value, (int, float)) else str(value)
+                            elif isinstance(value, float):
+                                display_value = f"{value:.6f}"
+                            else:
+                                display_value = str(value)
+                            
+                            item = QTableWidgetItem(display_value)
+                            table.setItem(row, col, item)
+                    
+                    # Permettre à l'UI de se rafraîchir entre les batchs
+                    QApplication.processEvents()
+                    
+            finally:
+                # Réactiver les updates
+                table.setUpdatesEnabled(True)
+            
+            self.append_log(f"✅ Table remplie: {len(display_df)} lignes × {len(display_df.columns)} colonnes")
+                
+        except Exception as e:
+            table.setUpdatesEnabled(True)  # S'assurer que les updates sont réactivées
+            self.append_log(f"❌ Erreur populate_table_data: {e}")
+    
     
     def load_dataframe_for_session(self, session_id: str):
         """Charge la DataFrame pour une session donnée"""

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import os
 import sys
 import time
+import shutil
 from prompt_toolkit import prompt, PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory
@@ -351,31 +352,105 @@ class TradingCLI:
         if 'indicators' in strategy_data:
             config.indicators = {}
             for ind_name, ind_config in strategy_data['indicators'].items():
-                config.indicators[ind_name] = IndicatorConfig(
-                    type=ind_config['type'],
-                    parameters=ind_config['parameters'],
-                    source=ind_config.get('source', 'close')
-                )
+                # Vérifier que ind_config est un dictionnaire
+                if isinstance(ind_config, dict):
+                    config.indicators[ind_name] = IndicatorConfig(
+                        type=ind_config['type'],
+                        parameters=ind_config['parameters'],
+                        source=ind_config.get('source', 'close')
+                    )
+                else:
+                    click.echo(f"⚠️ Indicateur {ind_name} ignoré: format invalide (type: {type(ind_config)})")
+                    continue
 
         # Appliquer règles de signaux
         if 'signal_rules' in strategy_data:
             config.signal_rules = []
-            if strategy_data['signal_rules'].get('long_condition'):
-                config.signal_rules.append(SignalRule(
-                    name="custom_long",
-                    signal_type="LONG",
-                    condition=strategy_data['signal_rules']['long_condition'],
-                    priority=2
-                ))
-            if strategy_data['signal_rules'].get('short_condition'):
-                config.signal_rules.append(SignalRule(
-                    name="custom_short",
-                    signal_type="SHORT",
-                    condition=strategy_data['signal_rules']['short_condition'],
-                    priority=2
-                ))
+            signal_rules_data = strategy_data['signal_rules']
+            
+            # Vérifier si signal_rules est une liste (nouveau format) ou un dictionnaire (ancien format)
+            if isinstance(signal_rules_data, list):
+                # Nouveau format : liste de règles
+                for rule_data in signal_rules_data:
+                    # Vérifier que rule_data est un dictionnaire
+                    if isinstance(rule_data, dict):
+                        config.signal_rules.append(SignalRule(
+                            name=rule_data.get('name', 'unknown_rule'),
+                            signal_type=rule_data.get('signal_type', 'LONG'),
+                            condition=rule_data.get('condition', ''),
+                            priority=rule_data.get('priority', 1)
+                        ))
+                    else:
+                        click.echo(f"⚠️ Règle de signal ignorée: format invalide (type: {type(rule_data)})")
+                        continue
+            elif isinstance(signal_rules_data, dict):
+                # Ancien format : dictionnaire avec long_condition/short_condition
+                if signal_rules_data.get('long_condition'):
+                    config.signal_rules.append(SignalRule(
+                        name="custom_long",
+                        signal_type="LONG",
+                        condition=signal_rules_data['long_condition'],
+                        priority=2
+                    ))
+                if signal_rules_data.get('short_condition'):
+                    config.signal_rules.append(SignalRule(
+                        name="custom_short",
+                        signal_type="SHORT",
+                        condition=signal_rules_data['short_condition'],
+                        priority=2
+                    ))
 
         return config
+    
+    async def clear_session_cache(self, session_id: str):
+        """Supprime le cache d'une session pour forcer un redémarrage complet"""
+        try:
+            # Obtenir les stratégies de la session
+            session = self.sessions_registry.get(session_id, {})
+            strategies = session.get('strategies', [])
+            
+            cache_cleared = False
+            
+            # Supprimer le cache pour chaque stratégie de la session
+            for strategy_id in strategies:
+                strategy_data = self.strategies_registry.get(strategy_id, {})
+                strategy_name = strategy_data.get('name', strategy_id)
+                symbol = strategy_data.get('symbol', 'UNKNOWN')
+                timeframe = strategy_data.get('timeframe', '1h')
+                
+                # Construire les chemins de cache
+                cache_paths = [
+                    f"cache_strategies/{strategy_name}/{strategy_id}",
+                    f"cache_crypto/kraken_future_spot/{symbol}_{timeframe}.feather",
+                    f"cache_crypto/kraken_future_mark/{symbol}_{timeframe}.feather"
+                ]
+                
+                # Supprimer les répertoires et fichiers de cache
+                for cache_path in cache_paths:
+                    if os.path.exists(cache_path):
+                        try:
+                            if os.path.isdir(cache_path):
+                                shutil.rmtree(cache_path)
+                                click.echo(f"🗑️ Répertoire cache supprimé: {cache_path}")
+                            else:
+                                os.remove(cache_path)
+                                click.echo(f"🗑️ Fichier cache supprimé: {cache_path}")
+                            cache_cleared = True
+                        except Exception as e:
+                            click.echo(f"⚠️ Erreur suppression {cache_path}: {e}")
+            
+            # Vider le cache en mémoire
+            if hasattr(self, '_session_cache'):
+                self._session_cache.clear()
+                
+            if cache_cleared:
+                click.echo(f"✅ Cache de la session '{session_id}' supprimé avec succès")
+            else:
+                click.echo(f"ℹ️ Aucun cache trouvé pour la session '{session_id}'")
+                
+        except Exception as e:
+            click.echo(f"❌ Erreur lors de la suppression du cache: {e}")
+            raise
 
 
 # Variable globale pour activer/désactiver les traces
@@ -883,16 +958,23 @@ def list_sessions(ctx, mode, output_format):
 @session.command('start')
 @click.argument('session_id')
 @click.option('--force', is_flag=True, help='Forcer le démarrage')
+@click.option('--restart', is_flag=True, help='Supprimer le cache et redémarrer depuis le début')
 @click.pass_context
 @smart_resolve_params(session_id='session')
 @trace_decorator
-def start_session(ctx, session_id, force):
+def start_session(ctx, session_id, force, restart):
     """Démarrer une session (workflow ou standard) - utilise la recherche intelligente"""
     trading_cli = ctx.obj['cli']
 
     async def _start():
 
         session = trading_cli.sessions_registry[session_id]
+        
+        # Gestion de l'option --restart : supprimer le cache
+        if restart:
+            click.echo(f"🗑️ Suppression du cache pour redémarrage complet...")
+            await trading_cli.clear_session_cache(session_id)
+            click.echo(f"✅ Cache supprimé, redémarrage depuis start_date")
 
         try:
             # Démarrage workflow si activé
